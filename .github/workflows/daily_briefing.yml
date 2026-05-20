@@ -1,0 +1,66 @@
+name: Daily Military News Briefing Pipeline (V4 - Self-Hosted)
+
+on:
+  repository_dispatch:
+    types: [trigger_daily_briefing]
+  workflow_dispatch: # 수동 기동 지원
+
+permissions:
+  contents: write # gh-pages 브랜치 배포에 필수적 권한
+
+jobs:
+  # 작업 1: 100% 클라우드 환경에서 뉴스 수집, 요약, 음성 생성 및 웹 플레이어 배포 전담
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests google-genai edge-tts nest-asyncio
+
+      - name: Run Briefing Pipeline Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          python app.py
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: .
+          clean: false
+          commit-message: "chore: 매일 아침 병무 소식 최신 음성 브리핑 업로드 🎤"
+
+  # 작업 2: 사용자의 로컬 윈도우 PC(Self-Hosted Runner)에서 직접 구동하여 카카오톡 전송
+  send-kakaotalk:
+    needs: build-and-deploy # 빌드 및 배포가 완료된 직후 실행
+    runs-on: self-hosted # 윈도우 로컬 러너 지목
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 히스토리 전체 조회하여 최신 업데이트 가져오기
+
+      - name: Pull latest gh-pages assets
+        run: |
+          # gh-pages 브랜치에 배포된 data.json 데이터를 가져오기 위해 저장소 싱크
+          git fetch origin gh-pages
+          git checkout origin/gh-pages -- data.json
+        continue-on-error: true # 혹시나 싱크 에러 시 로컬 캐시 사용하도록 보완
+
+      - name: Send KakaoTalk Message
+        run: |
+          # 로컬 PC 환경에서 직접 파이썬 카카오톡 송신 스크립트 가동!
+          python app_local_sender.py

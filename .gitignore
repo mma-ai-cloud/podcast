@@ -1,0 +1,11 @@
+# Environment credentials
+.env
+
+# Generated audio assets
+*.mp3
+briefing.mp3
+test_briefing.mp3
+
+# Python caches
+__pycache__/
+*.pyc
