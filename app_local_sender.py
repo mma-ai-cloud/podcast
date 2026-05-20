@@ -22,6 +22,14 @@ def load_dotenv():
 load_dotenv()
 
 def main():
+    # 윈도우 환경에서 이모지 출력 시 cp949 인코딩 에러 방지
+    if sys.stdout.encoding != 'utf-8':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except AttributeError:
+            import io
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
     print("==================================================")
     print("[SYSTEM] Start KakaoTalk Local Auto Sender (V4)")
     print("==================================================")
