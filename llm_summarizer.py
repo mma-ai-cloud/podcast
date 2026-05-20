@@ -77,7 +77,7 @@ class LLMSummarizer:
             try:
                 print(f"[정보] Gemini API 요청 중... (시도 {attempt}/{max_retries})")
                 response = self.client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.5-flash-preview-05-20",
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
