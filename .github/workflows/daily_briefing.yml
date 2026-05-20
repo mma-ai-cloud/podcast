@@ -1,6 +1,8 @@
 name: Daily Military News Briefing Pipeline (V4 - Self-Hosted)
 
 on:
+  schedule:
+    - cron: '0 22 * * *' # 매일 한국 시간 아침 7시 (UTC 22:00) 자동 트리거
   repository_dispatch:
     types: [trigger_daily_briefing]
   workflow_dispatch: # 수동 기동 지원
