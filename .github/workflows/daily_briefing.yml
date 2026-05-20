@@ -32,12 +32,62 @@ jobs:
           python app.py
 
       - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          branch: gh-pages
-          folder: .
-          clean: false
-          commit-message: "chore: 매일 아침 대체복무 소식 최신 음성 브리핑 업로드 🎤"
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Invoke-Git {
+            git @args
+            if ($LASTEXITCODE -ne 0) {
+              throw "git $($args -join ' ') failed with exit code $LASTEXITCODE"
+            }
+          }
+
+          Invoke-Git config user.name "github-actions[bot]"
+          Invoke-Git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          $deployBranch = "gh-pages-deploy-$env:GITHUB_RUN_ID"
+          $pagesDir = Join-Path $env:RUNNER_TEMP $deployBranch
+          $runnerTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
+          $resolvedPagesDir = [System.IO.Path]::GetFullPath($pagesDir)
+
+          if (-not $resolvedPagesDir.StartsWith($runnerTemp, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to use deploy directory outside RUNNER_TEMP: $resolvedPagesDir"
+          }
+
+          if (Test-Path -LiteralPath $resolvedPagesDir) {
+            Remove-Item -LiteralPath $resolvedPagesDir -Recurse -Force
+          }
+
+          Invoke-Git fetch origin gh-pages
+          Invoke-Git worktree add -B $deployBranch $resolvedPagesDir origin/gh-pages
+
+          try {
+            Copy-Item -LiteralPath index.html -Destination $resolvedPagesDir -Force
+            Copy-Item -LiteralPath data.json -Destination $resolvedPagesDir -Force
+            Copy-Item -LiteralPath briefing.mp3 -Destination $resolvedPagesDir -Force
+
+            Push-Location $resolvedPagesDir
+            Invoke-Git add index.html data.json briefing.mp3
+
+            git diff --cached --quiet
+            $diffExitCode = $LASTEXITCODE
+
+            if ($diffExitCode -eq 0) {
+              Write-Host "No GitHub Pages asset changes to deploy."
+            } elseif ($diffExitCode -eq 1) {
+              Invoke-Git commit -m "chore: 매일 아침 대체복무 소식 최신 음성 브리핑 업로드"
+              Invoke-Git push origin HEAD:gh-pages
+            } else {
+              throw "git diff --cached --quiet failed with exit code $diffExitCode"
+            }
+          } finally {
+            if ((Get-Location).Path -eq $resolvedPagesDir) {
+              Pop-Location
+            }
+            git worktree remove $resolvedPagesDir --force
+            git branch -D $deployBranch
+          }
 
   # 작업 2: 사용자의 로컬 윈도우 PC(Self-Hosted Runner)에서 직접 구동하여 카카오톡 전송
   send-kakaotalk:
