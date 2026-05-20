@@ -1,125 +1,230 @@
+import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
-from google import genai
-from google.genai import types
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 
 class LLMSummarizer:
-    def __init__(self, api_key=None):
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        self._client = None
-
-    @property
-    def client(self):
-        if self._client is None:
-            if not self.api_key:
-                raise ValueError("GEMINI_API_KEY 환경 변수 또는 생성자 인자가 설정되지 않았습니다.")
-            self._client = genai.Client(api_key=self.api_key)
-        return self._client
+    def __init__(self, codex_command=None, model=None, timeout_sec=None):
+        self.codex_command = self._resolve_codex_command(codex_command or os.environ.get("CODEX_COMMAND", "codex"))
+        self.model = model or os.environ.get("CODEX_MODEL")
+        self.timeout_sec = int(timeout_sec or os.environ.get("CODEX_TIMEOUT_SECONDS", "300"))
 
     def summarize_news(self, news_items):
         """
-        수집된 뉴스 아이템 리스트를 받아서 
+        수집된 뉴스 아이템 리스트를 받아
         1. PC 카카오톡 텍스트 메시지용 요약문
-        2. TTS(음성) 낭독용 스크립트 대본
-        을 각각 생성하여 반환합니다.
+        2. TTS(음성) 낭독용 스크립트
+        두 가지를 생성하여 반환합니다.
         """
         if not news_items:
-            # 뉴스가 없는 경우 디폴트 멘트 생성
-            no_news_message = "안녕하십니까. 병무청 소식 아침 브리핑입니다. 어제 하루 동안 새로 등록된 주요 병무 행정 관련 뉴스는 없습니다. 평화롭고 활기찬 하루 되시기 바랍니다. 감사합니다."
+            no_news_message = (
+                "안녕하십니까. 대체복무 관련 아침 브리핑입니다. "
+                "어제 하루 동안 새로 확인된 주요 대체복무 관련 뉴스는 없습니다. "
+                "오늘도 평온하고 건강한 하루 보내시기 바랍니다. 감사합니다."
+            )
             return {
-                "kakao_message": "[병무청 뉴스 브리핑]\n\n어제 하루 동안 새로 등록된 주요 병무 관련 뉴스가 없습니다.\n오늘도 평화롭고 건강한 하루 되세요!",
-                "tts_script": no_news_message
+                "kakao_message": (
+                    "[대체복무 뉴스 브리핑]\n\n"
+                    "어제 하루 동안 새로 확인된 주요 대체복무 관련 뉴스가 없습니다.\n"
+                    "오늘도 평온하고 건강한 하루 되세요!"
+                ),
+                "tts_script": no_news_message,
             }
 
-        # Gemini 입력을 위해 뉴스 항목 구조화
-        news_input = ""
-        for idx, item in enumerate(news_items, 1):
-            news_input += f"[{idx}] {item['title']}\n"
-            news_input += f"내용: {item['description']}\n\n"
-
+        news_input = self._format_news_items(news_items)
         prompt = f"""
-당신은 대한민국 국방 및 병무 행정을 전문으로 다루는 뉴스 아나운서이자 스마트 브리핑 어시스턴트입니다.
-아래에 제공된 어제 자 병무청 관련 뉴스 목록을 분석하고, 두 가지 버전의 결과물(1. 카카오톡 메시지, 2. TTS 낭독용 스크립트)을 생성해 주세요.
+당신은 한국어 뉴스 브리핑 작가입니다.
+아래 뉴스 목록은 '대체역심사위원회', '양심적병역거부', '여호와의증인', '대체복무' 키워드로 전날 수집한 기사입니다.
+기사 제목과 설명에 있는 사실만 사용하고, 추측이나 과장은 하지 마세요.
 
 [분석할 뉴스 데이터]
 {news_input}
 
----
+[작성 규칙]
+1. kakao_message
+- 단톡방에서 아침에 빠르게 읽을 수 있게 핵심 이슈를 2~3개로 묶어 주세요.
+- 친절하지만 과장 없는 한국어 문체를 사용하세요.
+- 첫 줄은 "📢 **[오늘의 대체복무 브리핑]**"로 시작하세요.
+- 마지막에는 반드시 "🎧 **음성 브리핑 바로 듣기:** [이동하기]" 문장을 포함하세요. URL은 쓰지 마세요.
 
-[작성 가이드라인]
-1. **결과물 1: 카카오톡 메시지 (kakao_message)**
-   - 단톡방 멤버들이 바쁜 아침에 한눈에 파악할 수 있도록 핵심 이슈를 깔끔하게 요약해 주세요.
-   - 격식 있으면서도 친절한 문체(이모티콘 적절히 활용)를 사용해 주세요.
-   - 구조:
-     📢 **[오늘의 병무청 브리핑]** (현재 날짜)
-     - 핵심 뉴스 요약 2~3가지 (한 줄 요약 + 짧은 설명)
-     - 🎧 **음성 브리핑 바로 듣기:** [이동하기](웹 플레이어 URL은 나중에 템플릿에 매핑되므로 그대로 놔두거나 빈칸으로 표기해 주세요.)
-
-2. **결과물 2: TTS 낭독용 스크립트 (tts_script)**
-   - **중요:** 이 텍스트는 인공지능 성우가 오디오 파일(MP3)로 읽을 대본입니다.
-   - 따라서 물결표(~), 대괄호([]), 슬래시(/), URL, 영문 약어 등의 기호나 딱딱한 문자를 **최대한 자연스럽게 한국어 말소리로 풀어서 작성**해야 합니다. (예: '10%' -> '십 퍼센트', 'AI' -> '에이아이', '2026.05.21' -> '이천이십육년 오월 이십일일')
-   - 부드럽고 차분한 목소리로 신뢰를 주는 아침 라디오 브리핑 멘트 형식으로 작성해 주세요. (예: "안녕하십니까. 오월 이십일일 목요일 아침 병무청 주요 뉴스 브리핑을 시작하겠습니다...")
-   - 전체 낭독 시간은 1분 내외(공백 포함 400~600자)로 읽기 좋게 다듬어 주세요.
+2. tts_script
+- 아침 라디오 브리핑처럼 차분한 한국어 낭독문으로 쓰세요.
+- 마크다운 기호, URL, 괄호, 슬래시, 표, 목록 기호는 넣지 마세요.
+- 영어 약자와 숫자는 가능한 한 한국어로 자연스럽게 풀어 쓰세요.
+- 전체 길이는 공백 포함 400~600자 안팎으로 맞추세요.
 
 [출력 형식]
-반드시 아래 JSON 형식으로만 정확히 반환해 주세요. 추가 설명이나 주석은 필요 없습니다.
-
+아래 JSON 객체만 반환하세요. 설명, 코드블록, 주석은 절대 붙이지 마세요.
 {{
   "kakao_message": "카카오톡 메시지 내용",
-  "tts_script": "TTS 낭독용 한국어 풀텍스트 대본"
+  "tts_script": "TTS 낭독용 한국어 대본"
 }}
 """
 
-        import json
-        max_retries = 3
+        max_retries = 2
         for attempt in range(1, max_retries + 1):
             try:
-                print(f"[정보] Gemini API 요청 중... (시도 {attempt}/{max_retries})")
-                response = self.client.models.generate_content(
-                    model="gemini-3.5-flash",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.7
-                    )
-                )
-                result = json.loads(response.text)
-                print(f"[정보] Gemini API 요약 성공! (시도 {attempt}회)")
+                print(f"[정보] Codex CLI 요약 요청 중... (시도 {attempt}/{max_retries})")
+                result = self._run_codex_json(prompt)
+                self._validate_result(result)
+                print(f"[정보] Codex CLI 요약 성공! (시도 {attempt}회)")
                 return result
             except Exception as e:
-                print(f"[경고] Gemini API 처리 실패 (시도 {attempt}/{max_retries}): {e}", file=sys.stderr)
+                print(f"[경고] Codex CLI 요약 실패 (시도 {attempt}/{max_retries}): {e}", file=sys.stderr)
                 if attempt < max_retries:
-                    wait_sec = 2 ** attempt  # 2초, 4초, 8초 exponential backoff
+                    wait_sec = 2 ** attempt
                     print(f"[정보] {wait_sec}초 후 재시도합니다...")
                     time.sleep(wait_sec)
 
-        # 모든 재시도 실패 시 폴백
-        print("[오류] Gemini API 최대 재시도 횟수 초과. 폴백 메시지를 사용합니다.", file=sys.stderr)
+        print("[오류] Codex CLI 최대 재시도 횟수 초과. 폴백 메시지를 사용합니다.", file=sys.stderr)
         return {
-            "kakao_message": "[병무청 뉴스 브리핑]\n\n뉴스 요약 중 에러가 발생했습니다. 플레이어 링크를 참고해 주세요.",
-            "tts_script": "안녕하세요. 오늘 아침 병무청 뉴스 브리핑 시스템에 일시적인 지연이 발생하였습니다. 대단히 죄송합니다. 잠시 후에 다시 실행해 주시기 바랍니다. 감사합니다."
+            "kakao_message": (
+                "[대체복무 뉴스 브리핑]\n\n"
+                "뉴스 요약 중 오류가 발생했습니다. 플레이어 링크를 참고해 주세요."
+            ),
+            "tts_script": (
+                "안녕하세요. 오늘 아침 대체복무 뉴스 브리핑 시스템에 일시적인 지연이 발생했습니다. "
+                "대단히 죄송합니다. 잠시 후 다시 실행해 주시기 바랍니다. 감사합니다."
+            ),
         }
 
+    def _format_news_items(self, news_items):
+        lines = []
+        for idx, item in enumerate(news_items, 1):
+            title = item.get("title", "").strip()
+            description = item.get("description", "").strip()
+            pub_date = item.get("pubDate", "").strip()
+            link = item.get("link") or item.get("originallink") or ""
+            lines.append(
+                f"[{idx}]\n"
+                f"제목: {title}\n"
+                f"일시: {pub_date}\n"
+                f"설명: {description}\n"
+                f"링크: {link}\n"
+            )
+        return "\n".join(lines)
+
+    def _run_codex_json(self, prompt):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = os.path.join(temp_dir, "codex_response.txt")
+            schema_path = os.path.join(temp_dir, "summary_schema.json")
+            with open(schema_path, "w", encoding="utf-8") as f:
+                json.dump(self._output_schema(), f, ensure_ascii=False, indent=2)
+
+            command = [
+                self.codex_command,
+                "-a",
+                "never",
+                "-s",
+                "read-only",
+                "exec",
+                "--ephemeral",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--output-schema",
+                schema_path,
+                "--output-last-message",
+                output_path,
+            ]
+            if self.model:
+                command.extend(["--model", self.model])
+            command.append("-")
+
+            completed = subprocess.run(
+                command,
+                input=prompt,
+                text=True,
+                encoding="utf-8",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.timeout_sec,
+                check=False,
+            )
+
+            if completed.returncode != 0:
+                stderr_tail = completed.stderr[-2000:].strip()
+                raise RuntimeError(f"codex exec 종료 코드 {completed.returncode}: {stderr_tail}")
+
+            raw_output = ""
+            if os.path.exists(output_path):
+                with open(output_path, "r", encoding="utf-8") as f:
+                    raw_output = f.read().strip()
+            if not raw_output:
+                raw_output = completed.stdout.strip()
+
+            return self._parse_json(raw_output)
+
+    def _parse_json(self, raw_output):
+        cleaned = raw_output.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+            if not match:
+                raise
+            return json.loads(match.group(0))
+
+    def _validate_result(self, result):
+        if not isinstance(result, dict):
+            raise ValueError("Codex 응답이 JSON 객체가 아닙니다.")
+        for key in ("kakao_message", "tts_script"):
+            if not isinstance(result.get(key), str) or not result[key].strip():
+                raise ValueError(f"Codex 응답에 유효한 {key} 값이 없습니다.")
+
+    def _output_schema(self):
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kakao_message", "tts_script"],
+            "properties": {
+                "kakao_message": {"type": "string"},
+                "tts_script": {"type": "string"},
+            },
+        }
+
+    def _resolve_codex_command(self, command):
+        if os.name != "nt" or os.path.basename(command).lower() != "codex":
+            return command
+
+        for candidate in ("codex.cmd", "codex.bat", "codex.exe", "codex"):
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+        return command
+
+
 if __name__ == "__main__":
-    # 로컬 개발 및 테스트용 코드
-    import json
     dummy_news = [
         {
-            "title": "병무청, 2026년도 병역판정검사 일자 및 장소 선택 접수 개시",
-            "description": "병무청은 내년도 병역판정검사를 받으려는 대상자들을 위해 원하는 일자와 장소를 직접 선택할 수 있는 신청을 오늘 오전 10시부터 선착순으로 접수한다고 밝혔습니다."
+            "title": "대체복무요원 교육 과정 개편 논의",
+            "description": "대체복무 관련 교육과 복무기관 운영 기준을 개선하기 위한 논의가 진행됐다는 소식입니다.",
+            "pubDate": "2026-05-20 10:00:00",
+            "link": "https://example.com/news/1",
         },
         {
-            "title": "강원지방병무청, 모범 사회복무요원 초청 격려 워크숍 개최",
-            "description": "강원지방병무청은 지역 내 복무 기관에서 투철한 책임감과 봉사 정신으로 귀감이 된 모범 사회복무요원 30명을 초청하여 힐링과 화합을 위한 워크숍을 진행했다고 전했습니다."
-        }
+            "title": "양심적 병역거부 관련 판례 분석 세미나 열려",
+            "description": "법조계와 시민단체가 양심적 병역거부와 대체복무 제도 운영 현황을 점검했습니다.",
+            "pubDate": "2026-05-20 14:30:00",
+            "link": "https://example.com/news/2",
+        },
     ]
-    try:
-        summarizer = LLMSummarizer()
-        res = summarizer.summarize_news(dummy_news)
-        print("====== 카카오 메시지 ======")
-        print(res["kakao_message"])
-        print("\n====== TTS 낭독 스크립트 ======")
-        print(res["tts_script"])
-    except Exception as e:
-        print(f"테스트 실패 (API 키 누락 가능성): {e}")
+    summarizer = LLMSummarizer()
+    res = summarizer.summarize_news(dummy_news)
+    print("====== 카카오톡 메시지 ======")
+    print(res["kakao_message"])
+    print("\n====== TTS 낭독 스크립트 ======")
+    print(res["tts_script"])

@@ -3,7 +3,7 @@ import sys
 import json
 from datetime import datetime, timedelta, timezone
 
-from news_collector import NewsCollector
+from news_collector import DEFAULT_KEYWORDS, NewsCollector
 from llm_summarizer import LLMSummarizer
 from tts_generator import TTSGenerator
 
@@ -38,16 +38,16 @@ def get_github_pages_url():
 
 def main():
     print("==================================================")
-    print("[SYSTEM] Start Military News Briefing Pipeline (V4)")
+    print("[SYSTEM] Start Alternative Service News Briefing Pipeline (V4)")
     print("==================================================")
 
     # 1. 뉴스 수집
     print("\n[Step 1] Fetching news via Naver API...")
     collector = NewsCollector()
-    news_items = collector.fetch_yesterday_news(query="병무청")
+    news_items = collector.fetch_yesterday_news(query=DEFAULT_KEYWORDS)
     
     # 2. LLM 요약 및 스크립트 작성
-    print("\n[Step 2] Summarizing news via Gemini API...")
+    print("\n[Step 2] Summarizing news via Codex CLI...")
     try:
         summarizer = LLMSummarizer()
         briefing_result = summarizer.summarize_news(news_items)

@@ -1,4 +1,4 @@
-name: Daily Military News Briefing Pipeline (V4 - Self-Hosted)
+name: Daily Alternative Service News Briefing Pipeline (V4 - Self-Hosted Codex)
 
 on:
   schedule:
@@ -11,9 +11,9 @@ permissions:
   contents: write # gh-pages 브랜치 배포에 필수적 권한
 
 jobs:
-  # 작업 1: 100% 클라우드 환경에서 뉴스 수집, 요약, 음성 생성 및 웹 플레이어 배포 전담
+  # 작업 1: 로컬 self-hosted runner에서 뉴스 수집, Codex 요약, 음성 생성 및 웹 플레이어 배포
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,11 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Briefing Pipeline Script
+      - name: Run Briefing Pipeline Script with Codex
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          CODEX_TIMEOUT_SECONDS: "600"
         run: |
           python app.py
 
@@ -43,7 +43,7 @@ jobs:
           branch: gh-pages
           folder: .
           clean: false
-          commit-message: "chore: 매일 아침 병무 소식 최신 음성 브리핑 업로드 🎤"
+          commit-message: "chore: 매일 아침 대체복무 소식 최신 음성 브리핑 업로드 🎤"
 
   # 작업 2: 사용자의 로컬 윈도우 PC(Self-Hosted Runner)에서 직접 구동하여 카카오톡 전송
   send-kakaotalk:
