@@ -64,5 +64,5 @@ jobs:
 
       - name: Send KakaoTalk Message
         run: |
-          # 로컬 PC 환경에서 직접 파이썬 카카오톡 송신 스크립트 가동!
+          python -m pip install pywin32 pyperclip --quiet
           python app_local_sender.py
