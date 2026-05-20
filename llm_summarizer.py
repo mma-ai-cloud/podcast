@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from google import genai
 from google.genai import types
 
@@ -70,25 +71,35 @@ class LLMSummarizer:
 }}
 """
 
-        try:
-            response = self.client.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.7
+        import json
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"[정보] Gemini API 요청 중... (시도 {attempt}/{max_retries})")
+                response = self.client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.7
+                    )
                 )
-            )
-            import json
-            result = json.loads(response.text)
-            return result
-        except Exception as e:
-            print(f"[오류] Gemini API 처리 실패: {e}", file=sys.stderr)
-            # 폴백용 디폴트 데이터
-            return {
-                "kakao_message": "[병무청 뉴스 브리핑]\n\n뉴스 요약 중 에러가 발생했습니다. 플레이어 링크를 참고해 주세요.",
-                "tts_script": "안녕하세요. 오늘 아침 병무청 뉴스 브리핑 시스템에 일시적인 지연이 발생하였습니다. 대단히 죄송합니다. 잠시 후에 다시 실행해 주시기 바랍니다. 감사합니다."
-            }
+                result = json.loads(response.text)
+                print(f"[정보] Gemini API 요약 성공! (시도 {attempt}회)")
+                return result
+            except Exception as e:
+                print(f"[경고] Gemini API 처리 실패 (시도 {attempt}/{max_retries}): {e}", file=sys.stderr)
+                if attempt < max_retries:
+                    wait_sec = 2 ** attempt  # 2초, 4초, 8초 exponential backoff
+                    print(f"[정보] {wait_sec}초 후 재시도합니다...")
+                    time.sleep(wait_sec)
+
+        # 모든 재시도 실패 시 폴백
+        print("[오류] Gemini API 최대 재시도 횟수 초과. 폴백 메시지를 사용합니다.", file=sys.stderr)
+        return {
+            "kakao_message": "[병무청 뉴스 브리핑]\n\n뉴스 요약 중 에러가 발생했습니다. 플레이어 링크를 참고해 주세요.",
+            "tts_script": "안녕하세요. 오늘 아침 병무청 뉴스 브리핑 시스템에 일시적인 지연이 발생하였습니다. 대단히 죄송합니다. 잠시 후에 다시 실행해 주시기 바랍니다. 감사합니다."
+        }
 
 if __name__ == "__main__":
     # 로컬 개발 및 테스트용 코드

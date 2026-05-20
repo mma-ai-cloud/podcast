@@ -46,20 +46,37 @@ class KakaoTalkSender:
             win32api.keybd_event(modifier, 0, win32con.KEYEVENTF_KEYUP, 0)
         time.sleep(0.1)
 
-    def _paste_clipboard(self, text):
-        """클립보드에 텍스트를 복사 후 Ctrl+V로 붙여넣습니다."""
-        pyperclip.copy(text)
+    def _focus_and_send(self, chat_hwnd, edit_hwnd, message):
+        """
+        Edit 컨트롤에 직접 포커스를 부여하고 클립보드 방식으로 텍스트를 전송합니다.
+        마우스 좌표와 무관하게 동작하므로 백그라운드에서도 안정적입니다.
+        """
+        WM_SETFOCUS  = 0x0007
+        EM_SETSEL    = 0x00B1
+        WM_KEYDOWN   = 0x0100
+        WM_KEYUP     = 0x0101
+
+        # 1) 채팅창 자체를 최전면으로
+        self._force_foreground(chat_hwnd)
+
+        # 2) Edit 컨트롤에 직접 SetFocus 메시지 전송
+        win32gui.SendMessage(edit_hwnd, WM_SETFOCUS, 0, 0)
+        time.sleep(0.2)
+
+        # 3) 커서를 맨 끝으로 이동 (EM_SETSEL -1,-1 = 끝으로)
+        win32gui.SendMessage(edit_hwnd, EM_SETSEL, -1, -1)
+        time.sleep(0.1)
+
+        # 4) 클립보드에 메시지 복사 후 키보드 Ctrl+V
+        pyperclip.copy(message)
         time.sleep(0.2)
         self._press_key(ord('V'), win32con.VK_CONTROL)
+        time.sleep(0.5)
 
-    def _click_at(self, x, y):
-        """지정한 화면 좌표를 마우스 클릭합니다."""
-        user32.SetCursorPos(x, y)
-        time.sleep(0.1)
-        user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
-        time.sleep(0.05)
-        user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
-        time.sleep(0.3)
+        # 5) Enter 전송
+        self._press_key(win32con.VK_RETURN)
+        time.sleep(0.5)
+
 
     # ──────────────────────────────────────────────
     # 창 탐색
@@ -140,34 +157,22 @@ class KakaoTalkSender:
             # 3. 채팅창 활성화
             self._force_foreground(chat_hwnd)
 
-            # 4. Edit 입력창 직접 마우스 클릭 → 포커스 확보
+            # 4. Edit 입력창 직접 포커스 후 메시지 전송
             edit_hwnd = self._find_input_edit(chat_hwnd)
             if edit_hwnd:
-                print(f"[정보] Edit 입력창 발견 (HWND: {edit_hwnd}) → 직접 클릭")
-                rect = win32gui.GetWindowRect(edit_hwnd)
-                cx = (rect[0] + rect[2]) // 2
-                cy = (rect[1] + rect[3]) // 2
+                print(f"[정보] Edit 입력창 발견 (HWND: {edit_hwnd}) → SendMessage 포커스 방식")
+                self._focus_and_send(chat_hwnd, edit_hwnd, message)
             else:
-                print("[경고] Edit 컨트롤 없음 → 채팅창 하단 클릭 fallback")
-                rect = win32gui.GetWindowRect(chat_hwnd)
-                cx = (rect[0] + rect[2]) // 2
-                cy = rect[3] - 35
-
-            self._click_at(cx, cy)
-
-            # 5. 기존 내용 전체 삭제 (안전장치)
-            self._press_key(ord('A'), win32con.VK_CONTROL)
-            self._press_key(win32con.VK_DELETE)
-
-            # 6. 클립보드 붙여넣기
-            print("[정보] 메시지 붙여넣기 중 (Ctrl+V)...")
-            self._paste_clipboard(message)
-            time.sleep(0.3)
-
-            # 7. Enter로 전송
-            print("[정보] 메시지 전송 (Enter)...")
-            self._press_key(win32con.VK_RETURN)
-            time.sleep(0.5)
+                # fallback: Edit 컨트롤 못 찾으면 창 강제 활성화 후 Ctrl+V
+                print("[경고] Edit 컨트롤 없음 → 창 포커스 후 Ctrl+V fallback")
+                self._force_foreground(chat_hwnd)
+                time.sleep(0.3)
+                pyperclip.copy(message)
+                time.sleep(0.2)
+                self._press_key(ord('V'), win32con.VK_CONTROL)
+                time.sleep(0.5)
+                self._press_key(win32con.VK_RETURN)
+                time.sleep(0.5)
 
             print(f"[성공] '{room_name}' 방에 메시지 전송 완료!")
             return True
@@ -175,6 +180,7 @@ class KakaoTalkSender:
         except Exception as e:
             print(f"[오류] 카카오톡 제어 중 예외 발생: {e}")
             return False
+
 
 
 if __name__ == "__main__":
