@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 import requests
 
 
-DEFAULT_KEYWORDS = ["대체역심사위원회", "양심적병역거부", "여호와의증인", "대체복무"]
+DEFAULT_KEYWORDS = ["대체역심사위원회", "양심적병역거부", "여호와의증인", "대체복무", "병무청"]
 
 
 class NewsCollector:
