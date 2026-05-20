@@ -59,7 +59,7 @@ jobs:
             Remove-Item -LiteralPath $resolvedPagesDir -Recurse -Force
           }
 
-          Invoke-Git fetch origin gh-pages
+          Invoke-Git fetch origin gh-pages:refs/remotes/origin/gh-pages
           Invoke-Git worktree add -B $deployBranch $resolvedPagesDir origin/gh-pages
 
           try {
@@ -76,7 +76,7 @@ jobs:
             if ($diffExitCode -eq 0) {
               Write-Host "No GitHub Pages asset changes to deploy."
             } elseif ($diffExitCode -eq 1) {
-              Invoke-Git commit -m "chore: 매일 아침 대체복무 소식 최신 음성 브리핑 업로드"
+              Invoke-Git commit -m "chore: update daily briefing assets"
               Invoke-Git push origin HEAD:gh-pages
             } else {
               throw "git diff --cached --quiet failed with exit code $diffExitCode"
