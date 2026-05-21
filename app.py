@@ -1,11 +1,20 @@
 import os
 import sys
 import json
+import re
+import shutil
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
 from datetime import datetime, timedelta, timezone
 
 from news_collector import DEFAULT_KEYWORDS, NewsCollector
 from llm_summarizer import LLMSummarizer
 from tts_generator import TTSGenerator
+
+ARCHIVE_DIR = "archive"
+HISTORY_FILE = "history.json"
+HISTORY_LIMIT = 60
 
 def load_dotenv():
     """
@@ -54,6 +63,152 @@ def get_audio_duration_seconds(audio_path):
         print(f"[WARNING] MP3 길이 계산 실패: {e}", file=sys.stderr)
     return None
 
+def ensure_trailing_slash(url):
+    return url if url.endswith("/") else f"{url}/"
+
+def safe_archive_id(value):
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
+    return cleaned or "briefing"
+
+def archive_id_from_updated_at(updated_at, fallback):
+    if not updated_at:
+        return fallback
+
+    timestamp = updated_at.replace(" KST", "").strip()
+    try:
+        parsed = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        return parsed.strftime("%Y%m%d-%H%M%S")
+    except ValueError:
+        return safe_archive_id(timestamp) or fallback
+
+def read_json_file(path, default):
+    if not os.path.exists(path):
+        return default
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[WARNING] {path} 읽기 실패: {e}", file=sys.stderr)
+        return default
+
+def fetch_url_bytes(url, timeout=15):
+    request = Request(
+        url,
+        headers={
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "User-Agent": "military-news-briefing-builder",
+        },
+    )
+    with urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+def fetch_json_url(url, default):
+    try:
+        payload = fetch_url_bytes(url)
+        return json.loads(payload.decode("utf-8"))
+    except HTTPError as e:
+        if e.code != 404:
+            print(f"[WARNING] 원격 JSON 조회 실패({url}): HTTP {e.code}", file=sys.stderr)
+    except (URLError, TimeoutError, json.JSONDecodeError) as e:
+        print(f"[WARNING] 원격 JSON 조회 실패({url}): {e}", file=sys.stderr)
+    return default
+
+def load_existing_history(pages_url):
+    local_history = read_json_file(HISTORY_FILE, [])
+    if local_history:
+        return local_history if isinstance(local_history, list) else []
+
+    if not os.environ.get("GITHUB_REPOSITORY"):
+        return []
+
+    history_url = urljoin(ensure_trailing_slash(pages_url), HISTORY_FILE)
+    remote_history = fetch_json_url(history_url, [])
+    return remote_history if isinstance(remote_history, list) else []
+
+def history_entry_for(web_data, archive_id, data_path, audio_path):
+    return {
+        "id": archive_id,
+        "date": web_data.get("date", ""),
+        "updated_at": web_data.get("updated_at", ""),
+        "title": f"{web_data.get('date', '브리핑')} 브리핑",
+        "data_url": data_path,
+        "audio_url": audio_path,
+        "news_count": len(web_data.get("news_list") or []),
+    }
+
+def write_json_file(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def write_archive_snapshot(web_data, archive_id, audio_source_path=None, audio_bytes=None):
+    archive_path = os.path.join(ARCHIVE_DIR, archive_id)
+    os.makedirs(archive_path, exist_ok=True)
+
+    data_path = f"{ARCHIVE_DIR}/{archive_id}/data.json"
+    audio_path = f"{ARCHIVE_DIR}/{archive_id}/briefing.mp3"
+    archived_data = dict(web_data)
+    archived_data["archive_id"] = archive_id
+    archived_data["audio_src"] = audio_path if (audio_source_path or audio_bytes) else None
+    archived_data["canonical_data_path"] = data_path
+    archived_data["is_archive"] = True
+
+    write_json_file(os.path.join(archive_path, "data.json"), archived_data)
+
+    if audio_source_path and os.path.exists(audio_source_path):
+        shutil.copy2(audio_source_path, os.path.join(archive_path, "briefing.mp3"))
+    elif audio_bytes:
+        with open(os.path.join(archive_path, "briefing.mp3"), "wb") as f:
+            f.write(audio_bytes)
+
+    return history_entry_for(archived_data, archive_id, data_path, archived_data["audio_src"])
+
+def fetch_previous_live_snapshot(pages_url, existing_history_ids, current_archive_id):
+    if not os.environ.get("GITHUB_REPOSITORY"):
+        return None
+
+    base_url = ensure_trailing_slash(pages_url)
+    previous_data = fetch_json_url(urljoin(base_url, "data.json"), None)
+    if not isinstance(previous_data, dict):
+        return None
+
+    fallback_id = archive_id_from_updated_at(
+        previous_data.get("updated_at"),
+        f"previous-{current_archive_id}",
+    )
+    archive_id = safe_archive_id(previous_data.get("archive_id") or fallback_id)
+    if archive_id == current_archive_id or archive_id in existing_history_ids:
+        return None
+
+    try:
+        audio_bytes = fetch_url_bytes(urljoin(base_url, "briefing.mp3"))
+    except (HTTPError, URLError, TimeoutError) as e:
+        print(f"[WARNING] 이전 음성 파일 보관 실패: {e}", file=sys.stderr)
+        audio_bytes = None
+
+    print(f"[INFO] 이전 배포 브리핑을 archive/{archive_id}/ 에 보관합니다.")
+    return write_archive_snapshot(previous_data, archive_id, audio_bytes=audio_bytes)
+
+def merge_history_entries(*entry_groups):
+    merged = []
+    seen = set()
+
+    for entries in entry_groups:
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            entry_id = entry.get("id")
+            data_url = entry.get("data_url")
+            if not entry_id or not data_url or entry_id in seen:
+                continue
+            merged.append(entry)
+            seen.add(entry_id)
+            if len(merged) >= HISTORY_LIMIT:
+                return merged
+
+    return merged
+
 def main():
     print("==================================================")
     print("[SYSTEM] Start Alternative Service News Briefing Pipeline (V4)")
@@ -90,7 +245,9 @@ def main():
     # 4. GitHub Pages용 JSON 데이터 세이브 (index.html이 fetch로 읽어갈 구조)
     print("\n[Step 4] Creating data.json for web player...")
     timezone_kst = timezone(timedelta(hours=9))
-    today_str = datetime.now(timezone_kst).strftime("%Y년 %m월 %d일")
+    now_kst = datetime.now(timezone_kst)
+    today_str = now_kst.strftime("%Y년 %m월 %d일")
+    archive_id = now_kst.strftime("%Y%m%d-%H%M%S")
     
     # 카카오톡 메시지에 실제 배포될 웹 플레이어 링크 결합
     pages_url = get_github_pages_url()
@@ -101,19 +258,28 @@ def main():
         final_kakao_message += f"\n\n🎧 음성 브리핑 바로 듣기:\n{pages_url}"
 
     web_data = {
+        "archive_id": archive_id,
         "date": today_str,
         "kakao_message": final_kakao_message,  # 카카오톡 전송 시 바로 활용할 수 있도록 최종 메시지 저장
         "player_url": pages_url,
+        "audio_src": output_mp3 if tts_success else None,
         "audio_duration_seconds": audio_duration_seconds,
         "tts_script": tts_script,
         "news_list": news_items,
-        "updated_at": datetime.now(timezone_kst).strftime("%Y-%m-%d %H:%M:%S KST")
+        "updated_at": now_kst.strftime("%Y-%m-%d %H:%M:%S KST"),
     }
 
     try:
-        with open("data.json", "w", encoding="utf-8") as f:
-            json.dump(web_data, f, ensure_ascii=False, indent=2)
+        existing_history = load_existing_history(pages_url)
+        existing_history_ids = {entry.get("id") for entry in existing_history if isinstance(entry, dict)}
+        previous_entry = fetch_previous_live_snapshot(pages_url, existing_history_ids, archive_id)
+        current_entry = write_archive_snapshot(web_data, archive_id, audio_source_path=output_mp3 if tts_success else None)
+        history = merge_history_entries([current_entry], [previous_entry] if previous_entry else [], existing_history)
+
+        write_json_file("data.json", web_data)
+        write_json_file(HISTORY_FILE, history)
         print("[INFO] data.json 저장 완료.")
+        print("[INFO] history.json 및 브리핑 아카이브 저장 완료.")
     except Exception as e:
         print(f"[ERROR] data.json 파일 생성 실패: {e}", file=sys.stderr)
 

@@ -66,9 +66,18 @@ jobs:
             Copy-Item -LiteralPath index.html -Destination $resolvedPagesDir -Force
             Copy-Item -LiteralPath data.json -Destination $resolvedPagesDir -Force
             Copy-Item -LiteralPath briefing.mp3 -Destination $resolvedPagesDir -Force
+            Copy-Item -LiteralPath history.json -Destination $resolvedPagesDir -Force
+            if (Test-Path -LiteralPath archive) {
+              $pagesArchiveDir = Join-Path $resolvedPagesDir "archive"
+              New-Item -ItemType Directory -Path $pagesArchiveDir -Force | Out-Null
+              Copy-Item -Path (Join-Path "archive" "*") -Destination $pagesArchiveDir -Recurse -Force
+            }
 
             Push-Location $resolvedPagesDir
-            Invoke-Git add index.html data.json briefing.mp3
+            Invoke-Git add index.html data.json briefing.mp3 history.json
+            if (Test-Path -LiteralPath archive) {
+              Invoke-Git add archive
+            }
 
             git diff --cached --quiet
             $diffExitCode = $LASTEXITCODE
