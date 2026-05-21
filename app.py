@@ -245,7 +245,6 @@ def main():
 
     # 1. 뉴스 수집
     print("\n[Step 1] Fetching news via Naver API...")
-    from news_collector import DEFAULT_KEYWORDS
     collector = NewsCollector()
     news_items = collector.fetch_yesterday_news(query=DEFAULT_KEYWORDS)
     
