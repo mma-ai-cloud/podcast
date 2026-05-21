@@ -178,7 +178,7 @@ def fetch_previous_live_snapshot(pages_url, existing_history_ids, current_archiv
         f"previous-{current_archive_id}",
     )
     archive_id = safe_archive_id(previous_data.get("archive_id") or fallback_id)
-    if archive_id == current_archive_id or archive_id in existing_history_ids:
+    if archive_id == current_archive_id:
         return None
 
     try:
@@ -187,7 +187,10 @@ def fetch_previous_live_snapshot(pages_url, existing_history_ids, current_archiv
         print(f"[WARNING] 이전 음성 파일 보관 실패: {e}", file=sys.stderr)
         audio_bytes = None
 
-    print(f"[INFO] 이전 배포 브리핑을 archive/{archive_id}/ 에 보관합니다.")
+    if archive_id in existing_history_ids:
+        print(f"[INFO] 기존 히스토리의 이전 음성 파일을 archive/{archive_id}/ 에 보강합니다.")
+    else:
+        print(f"[INFO] 이전 배포 브리핑을 archive/{archive_id}/ 에 보관합니다.")
     return write_archive_snapshot(previous_data, archive_id, audio_bytes=audio_bytes)
 
 def merge_history_entries(*entry_groups):

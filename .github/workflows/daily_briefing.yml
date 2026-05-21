@@ -74,9 +74,10 @@ jobs:
             }
 
             Push-Location $resolvedPagesDir
-            Invoke-Git add index.html data.json briefing.mp3 history.json
+            Invoke-Git add index.html data.json history.json
+            Invoke-Git add -f briefing.mp3
             if (Test-Path -LiteralPath archive) {
-              Invoke-Git add archive
+              Invoke-Git add -f archive
             }
 
             git diff --cached --quiet
