@@ -4,7 +4,7 @@
   "kakao_message": "[병무청 뉴스 브리핑]\n\n뉴스 요약 중 에러가 발생했습니다. 플레이어 링크를 참고해 주세요.",
   "player_url": "https://mma-ai-cloud.github.io/podcast/",
   "kakao_link_message": "https://mma-ai-cloud.github.io/podcast/",
-  "audio_src": "briefing.mp3",
+  "audio_src": "archive/20260521-173830/briefing.mp3",
   "audio_duration_seconds": 11.616,
   "tts_script": "안녕하세요. 오늘 아침 브리핑 시스템에 일시적인 지연이 발생하였습니다. 잠시 후 다시 실행해 주세요. 감사합니다.",
   "news_list": [
@@ -219,5 +219,7 @@
       "pubDate": "2026-05-20 06:03:00"
     }
   ],
-  "updated_at": "2026-05-21 17:38:30 KST"
+  "updated_at": "2026-05-21 17:38:30 KST",
+  "canonical_data_path": "archive/20260521-173830/data.json",
+  "is_archive": true
 }
