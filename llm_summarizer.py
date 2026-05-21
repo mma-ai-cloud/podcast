@@ -75,32 +75,45 @@ class LLMSummarizer:
 }}
 """
 
-        max_retries = 2
-        for attempt in range(1, max_retries + 1):
-            try:
-                print(f"[정보] Codex CLI 요약 요청 중... (시도 {attempt}/{max_retries})")
-                result = self._run_codex_json(prompt)
-                self._validate_result(result)
-                result["kakao_message"] = self._normalize_kakao_message(result["kakao_message"])
-                print(f"[정보] Codex CLI 요약 성공! (시도 {attempt}회)")
-                return result
-            except Exception as e:
-                print(f"[경고] Codex CLI 요약 실패 (시도 {attempt}/{max_retries}): {e}", file=sys.stderr)
-                if attempt < max_retries:
-                    wait_sec = 2 ** attempt
-                    print(f"[정보] {wait_sec}초 후 재시도합니다...")
-                    time.sleep(wait_sec)
+        # 우선순위 순서로 모델 시도 (상위 모델 실패 시 하위로 자동 폴백)
+        models_to_try = [
+            "gemini-3.5-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+        ]
 
-        print("[오류] Codex CLI 최대 재시도 횟수 초과. 폴백 메시지를 사용합니다.", file=sys.stderr)
+        for model_name in models_to_try:
+            for attempt in range(1, 4):  # 각 모델당 최대 3회 재시도
+                try:
+                    print(f"[정보] Gemini API 요청 중... 모델: {model_name} (시도 {attempt}/3)")
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.7
+                        )
+                    )
+                    result = json.loads(response.text)
+                    print(f"[정보] 요약 성공! 모델: {model_name} (시도 {attempt}회)")
+                    return result
+                except Exception as e:
+                    err_str = str(e)
+                    print(f"[경고] {model_name} 실패 (시도 {attempt}/3): {err_str[:80]}", file=sys.stderr)
+                    # 404 NOT_FOUND는 재시도 의미 없으므로 다음 모델로 바로 넘어감
+                    if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                        print(f"[정보] {model_name} 모델 사용 불가 → 다음 모델로 전환")
+                        break
+                    if attempt < 3:
+                        wait_sec = 2 ** attempt
+                        print(f"[정보] {wait_sec}초 후 재시도...")
+                        time.sleep(wait_sec)
+
+        # 모든 모델/재시도 실패 시 폴백
+        print("[오류] 사용 가능한 Gemini 모델이 없습니다. 폴백 메시지를 사용합니다.", file=sys.stderr)
         return {
-            "kakao_message": (
-                "📢 [오늘의 대체복무 브리핑]\n\n"
-                "뉴스 요약 중 오류가 발생했습니다. 플레이어 링크를 참고해 주세요."
-            ),
-            "tts_script": (
-                "안녕하세요. 오늘 아침 대체복무 뉴스 브리핑 시스템에 일시적인 지연이 발생했습니다. "
-                "대단히 죄송합니다. 잠시 후 다시 실행해 주시기 바랍니다. 감사합니다."
-            ),
+            "kakao_message": "[병무청 뉴스 브리핑]\n\n뉴스 요약 중 에러가 발생했습니다. 플레이어 링크를 참고해 주세요.",
+            "tts_script": "안녕하세요. 오늘 아침 브리핑 시스템에 일시적인 지연이 발생하였습니다. 잠시 후 다시 실행해 주세요. 감사합니다."
         }
 
     def _format_news_items(self, news_items):
