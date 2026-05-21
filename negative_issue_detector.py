@@ -688,13 +688,15 @@ def select_alerts(candidates, analysis_payload, recent_sent, max_alerts):
 def build_alert_messages(alert):
     source = alert["source"]
     link = source.get("link") or source.get("originallink") or ""
-    messages = [
-        f"🚨 병무청 부정이슈 탐지 | {alert['issue_title']}",
-        f"내용: {alert['issue_summary']} | 판단: {alert['negative_reason']}",
+    lines = [
+        "🚨 병무청 부정이슈 탐지",
+        f"제목: {alert['issue_title']}",
+        f"내용: {alert['issue_summary']}",
+        f"판단: {alert['negative_reason']}",
     ]
     if link:
-        messages.append(f"원문 링크: {link}")
-    return [clip(message, 900) for message in messages]
+        lines.append(f"원문 링크: {link}")
+    return [clip("\n".join(lines), 1200)]
 
 
 def send_alert(alert, send_mode):
