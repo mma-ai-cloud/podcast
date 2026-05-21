@@ -36,6 +36,24 @@ def get_github_pages_url():
     # GitHub Pages 주소 형식: https://owner.github.io/repo_name/
     return f"https://{owner}.github.io/{repo_name}/"
 
+def get_audio_duration_seconds(audio_path):
+    """
+    모바일 브라우저가 audio metadata를 늦게 읽는 경우를 대비해
+    생성 시점에 MP3 길이를 data.json에 저장합니다.
+    """
+    if not os.path.exists(audio_path):
+        return None
+
+    try:
+        from mutagen.mp3 import MP3
+        audio_file = MP3(audio_path)
+        duration = float(audio_file.info.length)
+        if duration > 0:
+            return round(duration, 3)
+    except Exception as e:
+        print(f"[WARNING] MP3 길이 계산 실패: {e}", file=sys.stderr)
+    return None
+
 def main():
     print("==================================================")
     print("[SYSTEM] Start Alternative Service News Briefing Pipeline (V4)")
@@ -67,6 +85,8 @@ def main():
     if not tts_success:
         print("[WARNING] TTS 생성에 실패했습니다. 기본 오디오 없이 텍스트 전송만 준비합니다.")
 
+    audio_duration_seconds = get_audio_duration_seconds(output_mp3) if tts_success else None
+
     # 4. GitHub Pages용 JSON 데이터 세이브 (index.html이 fetch로 읽어갈 구조)
     print("\n[Step 4] Creating data.json for web player...")
     timezone_kst = timezone(timedelta(hours=9))
@@ -84,6 +104,7 @@ def main():
         "date": today_str,
         "kakao_message": final_kakao_message,  # 카카오톡 전송 시 바로 활용할 수 있도록 최종 메시지 저장
         "player_url": pages_url,
+        "audio_duration_seconds": audio_duration_seconds,
         "tts_script": tts_script,
         "news_list": news_items,
         "updated_at": datetime.now(timezone_kst).strftime("%Y-%m-%d %H:%M:%S KST")
