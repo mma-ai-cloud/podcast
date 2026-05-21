@@ -241,6 +241,59 @@
             border-color: rgba(72, 202, 228, 0.3);
         }
 
+        .history-nav {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+            align-items: center;
+            gap: 10px;
+            margin-top: 18px;
+        }
+
+        .history-nav[hidden] {
+            display: none;
+        }
+
+        .history-btn {
+            min-height: 42px;
+            border: 1px solid var(--glass-border);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-main);
+            border-radius: 10px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 0 12px;
+            font-family: 'Noto Sans KR', sans-serif;
+            font-size: 0.88rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .history-btn:hover:not(:disabled) {
+            border-color: rgba(72, 202, 228, 0.35);
+            color: var(--primary);
+            background: rgba(72, 202, 228, 0.12);
+        }
+
+        .history-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        .history-current {
+            max-width: 190px;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            line-height: 1.35;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         /* 브리핑 텍스트 및 카드 레이아웃 */
         .content-section {
             margin-top: 35px;
@@ -400,6 +453,14 @@
                 height: 50px;
                 font-size: 1.3rem;
             }
+            .history-nav {
+                grid-template-columns: 1fr 1fr;
+            }
+            .history-current {
+                grid-column: 1 / -1;
+                grid-row: 1;
+                max-width: 100%;
+            }
             .script-card {
                 padding: 15px;
                 font-size: 0.9rem;
@@ -477,6 +538,18 @@
                 <!-- 배속 설정 -->
                 <div class="speed-badge" id="speed-ctrl" title="배속 조절">1.0x</div>
             </div>
+
+            <div class="history-nav" id="history-nav" hidden>
+                <button class="history-btn" id="history-next" type="button" title="다음 브리핑">
+                    <i class="fa-solid fa-chevron-left"></i>
+                    <span>다음</span>
+                </button>
+                <div class="history-current" id="history-current">최신 브리핑</div>
+                <button class="history-btn" id="history-prev" type="button" title="이전 브리핑">
+                    <span>이전</span>
+                    <i class="fa-solid fa-chevron-right"></i>
+                </button>
+            </div>
         </div>
 
         <!-- 브리핑 스크립트 색션 -->
@@ -513,72 +586,236 @@
         const speedCtrlBtn = document.getElementById('speed-ctrl');
         const playerContainer = document.getElementById('player-container');
         const visualizer = document.getElementById('visualizer');
+        const historyNav = document.getElementById('history-nav');
+        const historyNextBtn = document.getElementById('history-next');
+        const historyPrevBtn = document.getElementById('history-prev');
+        const historyCurrentEl = document.getElementById('history-current');
+        const loading = document.getElementById('loading');
+        const pageDateEl = document.getElementById('page-date');
+        const briefingScriptEl = document.getElementById('briefing-script');
+        const newsListContainer = document.getElementById('briefing-news-list');
 
         // 배속 상태 어레이
         const speeds = [1.0, 1.2, 1.5, 2.0];
         let currentSpeedIdx = 0;
         let knownDurationSeconds = null;
+        let briefingHistory = [];
+        let currentDataPath = getDataPathFromLocation();
 
-        // 1. data.json 파일 페치 및 렌더링
-        window.addEventListener('DOMContentLoaded', () => {
-            fetch('data.json')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('데이터 파일을 불러올 수 없습니다.');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    // 모바일 브라우저는 metadata preload를 생략할 수 있어 서버가 계산한 길이를 우선 표시합니다.
-                    knownDurationSeconds = Number(data.audio_duration_seconds);
-                    if (!Number.isFinite(knownDurationSeconds) || knownDurationSeconds <= 0) {
-                        knownDurationSeconds = null;
-                    }
-                    updateDurationDisplay();
-
-                    if (data.updated_at) {
-                        audio.src = `briefing.mp3?v=${encodeURIComponent(data.updated_at)}`;
-                        audio.load();
-                    }
-
-                    // 데이터 바인딩
-                    document.getElementById('page-date').innerText = `${data.date || '오늘'}의 신선한 소식`;
-                    document.getElementById('briefing-script').innerText = data.tts_script || '음성 브리핑 대본이 없습니다.';
-                    
-                    const newsListContainer = document.getElementById('briefing-news-list');
-                    newsListContainer.innerHTML = ''; // 초기화
-                    
-                    const newsList = data.news_list || [];
-                    if (newsList.length === 0) {
-                        newsListContainer.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem; text-align: center; padding: 20px;">어제 하루 동안 생성된 병무 뉴스가 없습니다.</p>';
-                    } else {
-                        newsList.forEach(news => {
-                            const card = document.createElement('div');
-                            card.className = 'news-card';
-                            card.innerHTML = `
-                                <h3><a href="${news.link}" target="_blank" rel="noopener noreferrer">${news.title}</a></h3>
-                                <p>${news.description}</p>
-                                <div class="news-meta">
-                                    <span><i class="fa-regular fa-clock"></i> ${news.pubDate}</span>
-                                    <a href="${news.link}" target="_blank" rel="noopener noreferrer" class="read-more">원문 기사 <i class="fa-solid fa-angle-right"></i></a>
-                                </div>
-                            `;
-                            newsListContainer.appendChild(card);
-                        });
-                    }
-                    
-                    // 로딩 제거
-                    const loading = document.getElementById('loading');
-                    loading.style.opacity = 0;
-                    setTimeout(() => loading.style.display = 'none', 500);
-                })
-                .catch(err => {
-                    console.error(err);
-                    document.getElementById('page-date').innerText = '데이터 로드 오류';
-                    document.getElementById('briefing-script').innerText = '데이터를 불러오는 도중 오류가 발생했습니다. 잠시 후 새로고침해 주세요.';
-                    document.getElementById('loading').style.display = 'none';
-                });
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await loadHistoryIndex();
+                await loadBriefing(currentDataPath);
+            } catch (err) {
+                showLoadError(err);
+            }
         });
+
+        window.addEventListener('popstate', () => {
+            loadBriefing(getDataPathFromLocation()).catch(showLoadError);
+        });
+
+        function getDataPathFromLocation() {
+            const params = new URLSearchParams(window.location.search);
+            return sanitizeDataPath(params.get('data'));
+        }
+
+        function sanitizeDataPath(path) {
+            if (!path) {
+                return 'data.json';
+            }
+
+            const cleaned = path.replace(/\\/g, '/').replace(/^\/+/, '');
+            if (cleaned === 'data.json' || /^archive\/[A-Za-z0-9_.-]+\/data\.json$/.test(cleaned)) {
+                return cleaned;
+            }
+            return 'data.json';
+        }
+
+        async function fetchJson(path, useCacheBust = true) {
+            const url = new URL(path, window.location.href);
+            if (useCacheBust) {
+                url.searchParams.set('v', Date.now().toString());
+            }
+
+            const response = await fetch(url.href, { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error('데이터 파일을 불러올 수 없습니다.');
+            }
+            return response.json();
+        }
+
+        async function loadHistoryIndex() {
+            try {
+                const data = await fetchJson('history.json');
+                briefingHistory = Array.isArray(data) ? data : [];
+            } catch (err) {
+                console.warn('history.json을 불러오지 못했습니다.', err);
+                briefingHistory = [];
+            }
+        }
+
+        async function loadBriefing(dataPath) {
+            currentDataPath = sanitizeDataPath(dataPath);
+            showLoading();
+
+            const data = await fetchJson(currentDataPath);
+            renderBriefing(data);
+            renderHistoryNav(data);
+            hideLoading();
+        }
+
+        function renderBriefing(data) {
+            knownDurationSeconds = Number(data.audio_duration_seconds);
+            if (!Number.isFinite(knownDurationSeconds) || knownDurationSeconds <= 0) {
+                knownDurationSeconds = null;
+            }
+
+            resetPlayer();
+            const audioSrc = getAudioSource(data);
+            if (audioSrc) {
+                audio.src = audioSrc;
+                audio.load();
+            }
+            updateDurationDisplay();
+
+            pageDateEl.innerText = `${data.date || '오늘'}의 신선한 소식`;
+            briefingScriptEl.innerText = data.tts_script || '음성 브리핑 대본이 없습니다.';
+            renderNewsList(data.news_list || []);
+        }
+
+        function getAudioSource(data) {
+            const fallbackAudioPath = currentDataPath === 'data.json'
+                ? 'briefing.mp3'
+                : currentDataPath.replace(/data\.json$/, 'briefing.mp3');
+            const audioPath = data.audio_src === null ? '' : (data.audio_src || fallbackAudioPath);
+            if (!audioPath) {
+                return '';
+            }
+
+            const audioUrl = new URL(audioPath, window.location.href);
+            audioUrl.searchParams.set('v', data.updated_at || data.archive_id || Date.now().toString());
+            return audioUrl.href;
+        }
+
+        function renderNewsList(newsList) {
+            newsListContainer.innerHTML = '';
+
+            if (!newsList.length) {
+                const empty = document.createElement('p');
+                empty.style.color = 'var(--text-muted)';
+                empty.style.fontSize = '0.9rem';
+                empty.style.textAlign = 'center';
+                empty.style.padding = '20px';
+                empty.innerText = '어제 하루 동안 생성된 병무 뉴스가 없습니다.';
+                newsListContainer.appendChild(empty);
+                return;
+            }
+
+            newsList.forEach(news => {
+                const card = document.createElement('div');
+                const title = document.createElement('h3');
+                const titleLink = document.createElement('a');
+                const description = document.createElement('p');
+                const meta = document.createElement('div');
+                const publishedAt = document.createElement('span');
+                const readMore = document.createElement('a');
+
+                card.className = 'news-card';
+                titleLink.href = news.link || '#';
+                titleLink.target = '_blank';
+                titleLink.rel = 'noopener noreferrer';
+                titleLink.innerText = news.title || '제목 없음';
+                title.appendChild(titleLink);
+
+                description.innerText = news.description || '';
+
+                meta.className = 'news-meta';
+                publishedAt.innerHTML = '<i class="fa-regular fa-clock"></i> ';
+                publishedAt.appendChild(document.createTextNode(news.pubDate || ''));
+
+                readMore.href = news.link || '#';
+                readMore.target = '_blank';
+                readMore.rel = 'noopener noreferrer';
+                readMore.className = 'read-more';
+                readMore.innerHTML = '원문 기사 <i class="fa-solid fa-angle-right"></i>';
+
+                meta.appendChild(publishedAt);
+                meta.appendChild(readMore);
+                card.appendChild(title);
+                card.appendChild(description);
+                card.appendChild(meta);
+                newsListContainer.appendChild(card);
+            });
+        }
+
+        function renderHistoryNav(data) {
+            const archiveId = data.archive_id;
+            const currentIndex = briefingHistory.findIndex(item => item.id === archiveId);
+            if (!archiveId || currentIndex === -1 || briefingHistory.length < 2) {
+                historyNav.hidden = true;
+                return;
+            }
+
+            const nextItem = briefingHistory[currentIndex - 1];
+            const prevItem = briefingHistory[currentIndex + 1];
+            historyCurrentEl.innerText = data.updated_at || data.date || '현재 브리핑';
+            setHistoryButton(historyNextBtn, nextItem);
+            setHistoryButton(historyPrevBtn, prevItem);
+            historyNav.hidden = false;
+        }
+
+        function setHistoryButton(button, item) {
+            const isAvailable = item && item.data_url;
+            button.disabled = !isAvailable;
+            button.onclick = isAvailable ? () => navigateToBriefing(item.data_url) : null;
+        }
+
+        function navigateToBriefing(dataPath) {
+            const nextDataPath = sanitizeDataPath(dataPath);
+            const url = new URL(window.location.href);
+            if (nextDataPath === 'data.json') {
+                url.searchParams.delete('data');
+            } else {
+                url.searchParams.set('data', nextDataPath);
+            }
+            window.history.pushState({}, '', url.href);
+            loadBriefing(nextDataPath).catch(showLoadError);
+        }
+
+        function showLoading() {
+            loading.style.display = 'flex';
+            loading.style.opacity = 1;
+        }
+
+        function hideLoading() {
+            loading.style.opacity = 0;
+            setTimeout(() => {
+                loading.style.display = 'none';
+            }, 300);
+        }
+
+        function showLoadError(err) {
+            console.error(err);
+            pageDateEl.innerText = '데이터 로드 오류';
+            briefingScriptEl.innerText = '데이터를 불러오는 도중 오류가 발생했습니다. 잠시 후 새로고침해 주세요.';
+            historyNav.hidden = true;
+            loading.style.display = 'none';
+        }
+
+        function resetPlayer() {
+            audio.pause();
+            try {
+                audio.currentTime = 0;
+            } catch (err) {
+                console.warn('오디오 위치 초기화 실패', err);
+            }
+            audio.removeAttribute('src');
+            progressFill.style.width = '0%';
+            currentTimeEl.innerText = '0:00';
+            playIcon.className = 'fa-solid fa-play';
+            visualizer.classList.remove('playing');
+        }
 
         // 2. 맞춤형 커스텀 오디오 재생 컨트롤
         
