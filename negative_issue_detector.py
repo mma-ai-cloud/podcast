@@ -16,8 +16,6 @@ from email.utils import parsedate_to_datetime
 import requests
 from requests import HTTPError
 
-from playmcp_sender import send_playmcp_memo
-
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -705,8 +703,20 @@ def send_alert(alert, send_mode):
         for message in messages:
             print(f"[DRY-RUN] {message}")
         return True
+    if send_mode == "local-kakao":
+        from kakaotalk_sender import KakaoTalkSender
+
+        room_name = os.environ.get("KAKAOTALK_ROOM_NAME", "대화반")
+        sender = KakaoTalkSender()
+        for message in messages:
+            if not sender.send_message_to_room(room_name, message):
+                raise RuntimeError(f"카카오톡 로컬 전송 실패: {room_name}")
+            time.sleep(0.8)
+        return True
     if send_mode != "playmcp":
         raise ValueError(f"지원하지 않는 전송 모드입니다: {send_mode}")
+
+    from playmcp_sender import send_playmcp_memo
 
     for message in messages:
         result = send_playmcp_memo(message)
@@ -832,7 +842,7 @@ def build_arg_parser():
     parser.add_argument("--max-alerts", type=int, default=int(os.environ.get("NEGATIVE_MAX_ALERTS", "3")))
     parser.add_argument(
         "--send-mode",
-        choices=["none", "playmcp"],
+        choices=["none", "local-kakao", "playmcp"],
         default=os.environ.get("NEGATIVE_ALERT_SEND_MODE", "none"),
     )
     return parser
