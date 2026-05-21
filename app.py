@@ -78,7 +78,7 @@ def main():
     if "[이동하기]" in final_kakao_message:
         final_kakao_message = final_kakao_message.replace("[이동하기]", pages_url)
     else:
-        final_kakao_message += f"\n\n🎧 **오늘의 음성 브리핑 바로 듣기:**\n{pages_url}"
+        final_kakao_message += f"\n\n🎧 음성 브리핑 바로 듣기:\n{pages_url}"
 
     web_data = {
         "date": today_str,

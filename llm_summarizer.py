@@ -34,7 +34,7 @@ class LLMSummarizer:
             )
             return {
                 "kakao_message": (
-                    "[대체복무 뉴스 브리핑]\n\n"
+                    "📢 [오늘의 대체복무 브리핑]\n\n"
                     "어제 하루 동안 새로 확인된 주요 대체복무 관련 뉴스가 없습니다.\n"
                     "오늘도 평온하고 건강한 하루 되세요!"
                 ),
@@ -52,10 +52,14 @@ class LLMSummarizer:
 
 [작성 규칙]
 1. kakao_message
-- 단톡방에서 아침에 빠르게 읽을 수 있게 핵심 이슈를 2~3개로 묶어 주세요.
+- 단톡방에서 아침에 빠르게 읽을 수 있게 핵심 이슈를 가능한 한 10개 항목으로 정리하세요.
+- 수집된 뉴스가 너무 적거나 서로 중복되면 8~10개 항목으로 정리하세요.
+- 각 항목은 제목 한 줄과 설명 한두 문장으로 쓰세요.
 - 친절하지만 과장 없는 한국어 문체를 사용하세요.
-- 첫 줄은 "📢 **[오늘의 대체복무 브리핑]**"로 시작하세요.
-- 마지막에는 반드시 "🎧 **음성 브리핑 바로 듣기:** [이동하기]" 문장을 포함하세요. URL은 쓰지 마세요.
+- 첫 줄은 "📢 [오늘의 대체복무 브리핑]"로 시작하세요.
+- 항목 번호는 반드시 "1️⃣", "2️⃣", "3️⃣" 같은 숫자 이모티콘을 사용하세요. "1.", "2.", "1)" 형식은 쓰지 마세요.
+- 마크다운 굵게 표시나 기호를 쓰지 마세요. 특히 "**", "__", "#", "`" 문자는 절대 쓰지 마세요.
+- 마지막에는 반드시 "🎧 음성 브리핑 바로 듣기: [이동하기]" 문장을 포함하세요. URL은 쓰지 마세요.
 
 2. tts_script
 - 아침 라디오 브리핑처럼 차분한 한국어 낭독문으로 쓰세요.
@@ -77,6 +81,7 @@ class LLMSummarizer:
                 print(f"[정보] Codex CLI 요약 요청 중... (시도 {attempt}/{max_retries})")
                 result = self._run_codex_json(prompt)
                 self._validate_result(result)
+                result["kakao_message"] = self._normalize_kakao_message(result["kakao_message"])
                 print(f"[정보] Codex CLI 요약 성공! (시도 {attempt}회)")
                 return result
             except Exception as e:
@@ -89,7 +94,7 @@ class LLMSummarizer:
         print("[오류] Codex CLI 최대 재시도 횟수 초과. 폴백 메시지를 사용합니다.", file=sys.stderr)
         return {
             "kakao_message": (
-                "[대체복무 뉴스 브리핑]\n\n"
+                "📢 [오늘의 대체복무 브리핑]\n\n"
                 "뉴스 요약 중 오류가 발생했습니다. 플레이어 링크를 참고해 주세요."
             ),
             "tts_script": (
@@ -184,6 +189,33 @@ class LLMSummarizer:
         for key in ("kakao_message", "tts_script"):
             if not isinstance(result.get(key), str) or not result[key].strip():
                 raise ValueError(f"Codex 응답에 유효한 {key} 값이 없습니다.")
+
+    def _normalize_kakao_message(self, message):
+        """카카오톡용 메시지에서 마크다운과 일반 숫자 목록을 제거합니다."""
+        number_emoji = {
+            "1": "1️⃣",
+            "2": "2️⃣",
+            "3": "3️⃣",
+            "4": "4️⃣",
+            "5": "5️⃣",
+            "6": "6️⃣",
+            "7": "7️⃣",
+            "8": "8️⃣",
+            "9": "9️⃣",
+            "10": "🔟",
+        }
+
+        normalized = message
+        for marker in ("**", "__", "`", "###", "##", "#"):
+            normalized = normalized.replace(marker, "")
+
+        def replace_number(match):
+            indent, number = match.groups()
+            return f"{indent}{number_emoji.get(number, number + '️⃣')} "
+
+        normalized = re.sub(r"(?m)^(\s*)(10|[1-9])[\.\)]\s+", replace_number, normalized)
+        normalized = re.sub(r"(?m)^(\s*)[-*]\s+", r"\1", normalized)
+        return normalized.strip()
 
     def _output_schema(self):
         return {
