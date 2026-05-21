@@ -447,7 +447,7 @@
             </div>
 
             <!-- 숨겨진 HTML 오디오 객체 -->
-            <audio id="main-audio" src="briefing.mp3" preload="metadata"></audio>
+            <audio id="main-audio" src="briefing.mp3" preload="metadata" playsinline></audio>
 
             <!-- 타임라인 -->
             <div class="progress-area">
@@ -517,6 +517,7 @@
         // 배속 상태 어레이
         const speeds = [1.0, 1.2, 1.5, 2.0];
         let currentSpeedIdx = 0;
+        let knownDurationSeconds = null;
 
         // 1. data.json 파일 페치 및 렌더링
         window.addEventListener('DOMContentLoaded', () => {
@@ -528,6 +529,18 @@
                     return response.json();
                 })
                 .then(data => {
+                    // 모바일 브라우저는 metadata preload를 생략할 수 있어 서버가 계산한 길이를 우선 표시합니다.
+                    knownDurationSeconds = Number(data.audio_duration_seconds);
+                    if (!Number.isFinite(knownDurationSeconds) || knownDurationSeconds <= 0) {
+                        knownDurationSeconds = null;
+                    }
+                    updateDurationDisplay();
+
+                    if (data.updated_at) {
+                        audio.src = `briefing.mp3?v=${encodeURIComponent(data.updated_at)}`;
+                        audio.load();
+                    }
+
                     // 데이터 바인딩
                     document.getElementById('page-date').innerText = `${data.date || '오늘'}의 신선한 소식`;
                     document.getElementById('briefing-script').innerText = data.tts_script || '음성 브리핑 대본이 없습니다.';
@@ -587,20 +600,20 @@
         // 오디오 타임라인 업데이트
         audio.addEventListener('timeupdate', () => {
             const current = audio.currentTime;
-            const total = audio.duration;
+            const total = getKnownDuration();
             
-            if (!isNaN(total)) {
+            if (total > 0) {
                 const pct = (current / total) * 100;
                 progressFill.style.width = `${pct}%`;
                 
                 // 시간 텍스트 포맷 (M:SS)
-                currentTimeEl.innerText = formatTime(current);
             }
+            currentTimeEl.innerText = formatTime(current);
         });
 
         // 메타데이터 로드 시 오디오 총시간 세팅
-        audio.addEventListener('loadedmetadata', () => {
-            durationEl.innerText = formatTime(audio.duration);
+        ['loadedmetadata', 'durationchange', 'loadeddata', 'canplay'].forEach(eventName => {
+            audio.addEventListener(eventName, updateDurationDisplay);
         });
 
         // 재생이 끝났을 때 원상태 복귀
@@ -613,18 +626,35 @@
 
         // 시간 포맷 가공 유틸
         function formatTime(secs) {
+            if (!Number.isFinite(secs) || secs <= 0) {
+                return '0:00';
+            }
             const mins = Math.floor(secs / 60);
             const remainSecs = Math.floor(secs % 60);
             return `${mins}:${remainSecs < 10 ? '0' : ''}${remainSecs}`;
+        }
+
+        function getKnownDuration() {
+            if (Number.isFinite(audio.duration) && audio.duration > 0) {
+                return audio.duration;
+            }
+            if (Number.isFinite(knownDurationSeconds) && knownDurationSeconds > 0) {
+                return knownDurationSeconds;
+            }
+            return 0;
+        }
+
+        function updateDurationDisplay() {
+            durationEl.innerText = formatTime(getKnownDuration());
         }
 
         // 재생 바 드래그 / 클릭 이동
         progressWrapper.addEventListener('click', (e) => {
             const totalWidth = progressWrapper.clientWidth;
             const clickX = e.offsetX;
-            const totalDuration = audio.duration;
+            const totalDuration = getKnownDuration();
             
-            if (!isNaN(totalDuration)) {
+            if (totalDuration > 0) {
                 audio.currentTime = (clickX / totalWidth) * totalDuration;
             }
         });
@@ -636,8 +666,9 @@
 
         // 10초 앞으로 건너뛰기
         skipForwardBtn.addEventListener('click', () => {
-            if (!isNaN(audio.duration)) {
-                audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+            const totalDuration = getKnownDuration();
+            if (totalDuration > 0) {
+                audio.currentTime = Math.min(totalDuration, audio.currentTime + 10);
             }
         });
 
