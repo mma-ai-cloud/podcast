@@ -209,6 +209,32 @@ def merge_history_entries(*entry_groups):
 
     return merged
 
+def strip_audio_link_from_kakao_message(message, pages_url):
+    """
+    카카오톡 본문과 URL을 분리 전송하기 위해 요약문 안의 플레이어 링크 줄을 제거합니다.
+    기존 프롬프트가 남긴 [이동하기] 자리표시자나 이미 삽입된 URL도 함께 정리합니다.
+    """
+    cleaned_lines = []
+    for line in (message or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+
+        has_audio_link_label = "음성 브리핑" in stripped and ("바로 듣기" in stripped or "[이동하기]" in stripped)
+        has_link_placeholder = "[이동하기]" in stripped
+        has_pages_url = pages_url and pages_url in stripped
+
+        if has_link_placeholder or has_pages_url or has_audio_link_label:
+            remainder = line.replace("[이동하기]", "").replace(pages_url, "").strip()
+            if remainder and not has_audio_link_label:
+                cleaned_lines.append(remainder)
+            continue
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
 def main():
     print("==================================================")
     print("[SYSTEM] Start Alternative Service News Briefing Pipeline (V4)")
@@ -251,17 +277,14 @@ def main():
     
     # 카카오톡 메시지에 실제 배포될 웹 플레이어 링크 결합
     pages_url = get_github_pages_url()
-    final_kakao_message = kakao_base_msg
-    if "[이동하기]" in final_kakao_message:
-        final_kakao_message = final_kakao_message.replace("[이동하기]", pages_url)
-    else:
-        final_kakao_message += f"\n\n🎧 음성 브리핑 바로 듣기:\n{pages_url}"
+    final_kakao_message = strip_audio_link_from_kakao_message(kakao_base_msg, pages_url)
 
     web_data = {
         "archive_id": archive_id,
         "date": today_str,
         "kakao_message": final_kakao_message,  # 카카오톡 전송 시 바로 활용할 수 있도록 최종 메시지 저장
         "player_url": pages_url,
+        "kakao_link_message": pages_url,
         "audio_src": output_mp3 if tts_success else None,
         "audio_duration_seconds": audio_duration_seconds,
         "tts_script": tts_script,

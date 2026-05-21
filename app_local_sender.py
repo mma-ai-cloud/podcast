@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 
 from kakaotalk_sender import KakaoTalkSender
 
@@ -52,21 +53,30 @@ def main():
     if not message:
         print("[오류] 요약된 카카오톡 메시지 내용이 data.json에 존재하지 않습니다.", file=sys.stderr)
         sys.exit(1)
+    link_message = (data.get("kakao_link_message") or data.get("player_url") or "").strip()
+    if link_message and link_message in message:
+        link_message = ""
 
     # 전송할 대화방 이름 로드
     room_name = os.environ.get("KAKAOTALK_ROOM_NAME", "나와의 채팅")
     print(f"[정보] 대상 대화방 이름: '{room_name}'")
     print("====== 전송할 메시지 내용 ======")
     print(message)
+    if link_message:
+        print("\n====== 별도 전송할 음성요약페이지 주소 ======")
+        print(link_message)
     print("================================\n")
 
     # 카카오톡 전송 라이브러리 가동
     sender = KakaoTalkSender()
     success = sender.send_message_to_room(room_name, message)
+    if success and link_message:
+        time.sleep(1.0)
+        success = sender.send_message_to_room(room_name, link_message)
 
     print("==================================================")
     if success:
-        print("SUCCESS: 카카오톡 브리핑 메시지가 안전하게 전송되었습니다!")
+        print("SUCCESS: 카카오톡 브리핑 메시지와 음성요약페이지 주소가 안전하게 전송되었습니다!")
     else:
         print("ERROR: 카카오톡 전송 중 오류가 발생했습니다.")
         sys.exit(1)
