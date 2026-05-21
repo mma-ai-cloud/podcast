@@ -147,34 +147,28 @@ class KakaoTalkSender:
 
     def _find_chat_window(self, room_name):
         """제목이 정확히 일치하는 채팅창을 우선 찾고, 없으면 포함 매칭합니다."""
-        exact = []
+        candidates = []
 
-        def exact_cb(hwnd, _):
+        def cb(hwnd, _):
             if win32gui.IsWindowVisible(hwnd):
                 title = win32gui.GetWindowText(hwnd)
                 cls = win32gui.GetClassName(hwnd)
-                if cls == self.chat_class_name and title == room_name:
-                    exact.append(hwnd)
-                    return False
-            return True
+                if cls == self.chat_class_name and title:
+                    candidates.append((hwnd, title))
+            return True  # 항상 True 반환 (return False 시 pywin32 내부 에러 발생)
 
-        win32gui.EnumWindows(exact_cb, None)
-        if exact:
-            return exact[0]
+        win32gui.EnumWindows(cb, None)
 
-        partial = []
+        # 1순위: 정확히 일치
+        for hwnd, title in candidates:
+            if title == room_name:
+                return hwnd
+        # 2순위: 포함 매칭
+        for hwnd, title in candidates:
+            if room_name in title:
+                return hwnd
+        return None
 
-        def partial_cb(hwnd, _):
-            if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                cls = win32gui.GetClassName(hwnd)
-                if cls == self.chat_class_name and title and room_name in title:
-                    partial.append(hwnd)
-                    return False
-            return True
-
-        win32gui.EnumWindows(partial_cb, None)
-        return partial[0] if partial else None
 
     def _find_child_by_class(self, parent_hwnd, class_name):
         if not parent_hwnd:
