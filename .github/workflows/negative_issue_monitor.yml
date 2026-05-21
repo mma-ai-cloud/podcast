@@ -14,49 +14,40 @@ concurrency:
 
 jobs:
   scan-and-alert:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          npm install -g mcporter
+          npm.cmd install -g mcporter
 
       - name: Configure PlayMCP credentials
+        shell: powershell
         env:
           MCPORTER_CONFIG_JSON: ${{ secrets.MCPORTER_CONFIG_JSON }}
           MCPORTER_CREDENTIALS_JSON: ${{ secrets.MCPORTER_CREDENTIALS_JSON }}
         run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.mcporter"
-          if [ -z "$MCPORTER_CONFIG_JSON" ] || [ -z "$MCPORTER_CREDENTIALS_JSON" ]; then
-            echo "PlayMCP mcporter secrets are missing." >&2
-            exit 1
-          fi
-          printf '%s' "$MCPORTER_CONFIG_JSON" > "$HOME/.mcporter/mcporter.json"
-          printf '%s' "$MCPORTER_CREDENTIALS_JSON" > "$HOME/.mcporter/credentials.json"
+          $ErrorActionPreference = "Stop"
+          if (-not $env:MCPORTER_CONFIG_JSON -or -not $env:MCPORTER_CREDENTIALS_JSON) {
+            throw "PlayMCP mcporter secrets are missing."
+          }
+          $mcporterDir = Join-Path $env:USERPROFILE ".mcporter"
+          New-Item -ItemType Directory -Force -Path $mcporterDir | Out-Null
+          [System.IO.File]::WriteAllText((Join-Path $mcporterDir "mcporter.json"), $env:MCPORTER_CONFIG_JSON, [System.Text.UTF8Encoding]::new($false))
+          [System.IO.File]::WriteAllText((Join-Path $mcporterDir "credentials.json"), $env:MCPORTER_CREDENTIALS_JSON, [System.Text.UTF8Encoding]::new($false))
 
       - name: Run negative issue detector
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          NEGATIVE_ISSUE_ANALYZER: codex
+          CODEX_TIMEOUT_SECONDS: "600"
           NEGATIVE_ALERT_SEND_MODE: playmcp
           NEGATIVE_LOOKBACK_HOURS: "6"
           NEGATIVE_SUPPRESS_HOURS: "8"
@@ -65,15 +56,20 @@ jobs:
           python negative_issue_detector.py
 
       - name: Commit monitor state
+        shell: powershell
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = "Stop"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git pull --rebase --autostash origin main
           git add negative_issue_state.json
-          if git diff --cached --quiet; then
-            echo "No negative issue state changes."
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No negative issue state changes."
             exit 0
-          fi
+          }
+          if ($LASTEXITCODE -ne 1) {
+            throw "git diff --cached --quiet failed with exit code $LASTEXITCODE"
+          }
           git commit -m "chore: update negative issue monitor state"
           git push origin HEAD:main

@@ -4,13 +4,17 @@ import html
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 
 import requests
+from requests import HTTPError
 
 from playmcp_sender import send_playmcp_memo
 
@@ -23,6 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
 KST = timezone(timedelta(hours=9))
 DEFAULT_STATE_FILE = "negative_issue_state.json"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_ANALYZER = "codex"
 DEFAULT_QUERIES = [
     "병무청 논란",
     "병무청 의혹",
@@ -215,6 +220,7 @@ class RecentNaverNewsFetcher:
                     normalized["title"] + normalized["description"]
                 )
                 deduped.setdefault(key, normalized)
+            time.sleep(float(os.environ.get("NAVER_SEARCH_DELAY_SECONDS", "0.35")))
 
         items = sorted(deduped.values(), key=lambda item: item["published_at_dt"], reverse=True)
         for item in items:
@@ -232,9 +238,28 @@ class RecentNaverNewsFetcher:
             "start": 1,
             "sort": "date",
         }
-        response = requests.get(self.api_url, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+        data = None
+        for attempt in range(1, 3):
+            try:
+                response = requests.get(self.api_url, headers=headers, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                break
+            except HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 429 and attempt == 1:
+                    wait_sec = float(os.environ.get("NAVER_429_RETRY_SECONDS", "3"))
+                    print(f"[경고] 네이버 API 호출 제한 감지. {wait_sec}초 후 재시도합니다: {query}", file=sys.stderr)
+                    time.sleep(wait_sec)
+                    continue
+                print(f"[경고] 네이버 API 호출 실패로 검색어를 건너뜁니다 ({query}): {exc}", file=sys.stderr)
+                return []
+            except Exception as exc:
+                print(f"[경고] 네이버 API 호출 실패로 검색어를 건너뜁니다 ({query}): {exc}", file=sys.stderr)
+                return []
+
+        if data is None:
+            return []
         print(f"[정보] '{query}' 검색 결과 {len(data.get('items', []))}개 수신")
         return data.get("items", [])
 
@@ -421,6 +446,130 @@ def call_openai_json(prompt):
     return json.loads(content)
 
 
+def output_schema():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["analysis"],
+        "properties": {
+            "analysis": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "source_index",
+                        "is_negative",
+                        "alert_recommended",
+                        "severity",
+                        "issue_key",
+                        "issue_title",
+                        "issue_summary",
+                        "negative_reason",
+                        "duplicate_of_sent_issue_id",
+                    ],
+                    "properties": {
+                        "source_index": {"type": "integer"},
+                        "is_negative": {"type": "boolean"},
+                        "alert_recommended": {"type": "boolean"},
+                        "severity": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high", "critical"],
+                        },
+                        "issue_key": {"type": "string"},
+                        "issue_title": {"type": "string"},
+                        "issue_summary": {"type": "string"},
+                        "negative_reason": {"type": "string"},
+                        "duplicate_of_sent_issue_id": {
+                            "anyOf": [{"type": "string"}, {"type": "null"}]
+                        },
+                    },
+                },
+            }
+        },
+    }
+
+
+def resolve_codex_command():
+    configured = os.environ.get("CODEX_COMMAND")
+    if configured:
+        return configured
+
+    for candidate in ("codex", "codex.cmd", "codex.exe", "codex.bat"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+
+    raise FileNotFoundError("codex CLI 실행 파일을 찾을 수 없습니다.")
+
+
+def parse_json_output(raw_output):
+    cleaned = (raw_output or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def call_codex_json(prompt):
+    timeout_sec = int(os.environ.get("CODEX_TIMEOUT_SECONDS", "600"))
+    model = os.environ.get("CODEX_MODEL")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        schema_path = os.path.join(temp_dir, "negative_issue_schema.json")
+        output_path = os.path.join(temp_dir, "codex_negative_issue_response.txt")
+        with open(schema_path, "w", encoding="utf-8") as file:
+            json.dump(output_schema(), file, ensure_ascii=False, indent=2)
+
+        command = [
+            resolve_codex_command(),
+            "-a",
+            "never",
+            "-s",
+            "read-only",
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--output-schema",
+            schema_path,
+            "--output-last-message",
+            output_path,
+        ]
+        if model:
+            command.extend(["--model", model])
+        command.append("-")
+
+        completed = subprocess.run(
+            command,
+            input=prompt,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout_sec,
+            check=False,
+        )
+        if completed.returncode != 0:
+            stderr_tail = (completed.stderr or "")[-2000:].strip()
+            raise RuntimeError(f"codex exec 종료 코드 {completed.returncode}: {stderr_tail}")
+
+        raw_output = ""
+        if os.path.exists(output_path):
+            with open(output_path, "r", encoding="utf-8") as file:
+                raw_output = file.read().strip()
+        if not raw_output:
+            raw_output = completed.stdout.strip()
+
+        return parse_json_output(raw_output)
+
+
 def fallback_analysis(candidates, recent_sent):
     analysis = []
     for index, item in enumerate(candidates, 1):
@@ -601,14 +750,15 @@ def parse_queries(value):
 
 
 def run(args):
+    analyzer = os.environ.get("NEGATIVE_ISSUE_ANALYZER", DEFAULT_ANALYZER).strip().lower()
     if (
         args.send_mode != "none"
-        and not os.environ.get("OPENAI_API_KEY")
+        and analyzer == "rule"
         and os.environ.get("ALLOW_RULE_BASED_ALERTS", "").lower() not in {"1", "true", "yes"}
     ):
         raise RuntimeError(
-            "자동 카카오톡 전송에는 OPENAI_API_KEY가 필요합니다. "
-            "내용 기반 부정이슈/중복 판별 없이 규칙 기반 알림만 보내려면 ALLOW_RULE_BASED_ALERTS=true를 설정하세요."
+            "자동 카카오톡 전송에는 Codex CLI 또는 OpenAI API 분석이 필요합니다. "
+            "규칙 기반 알림만 보내려면 ALLOW_RULE_BASED_ALERTS=true를 설정하세요."
         )
 
     state = load_state(args.state_file)
@@ -630,15 +780,32 @@ def run(args):
         print("[정보] 전송할 부정이슈가 없습니다.")
         return 0
 
-    openai_payload = None
-    if os.environ.get("OPENAI_API_KEY"):
+    analysis_payload = None
+    analysis_prompt = build_openai_prompt(candidates, recent_sent)
+    if analyzer == "codex":
         try:
-            openai_payload = call_openai_json(build_openai_prompt(candidates, recent_sent))
+            analysis_payload = call_codex_json(analysis_prompt)
+            print("[정보] Codex CLI 분석 완료")
+        except Exception as exc:
+            if args.send_mode == "none" or os.environ.get("ALLOW_RULE_BASED_ALERTS", "").lower() in {"1", "true", "yes"}:
+                print(f"[경고] Codex CLI 분석 실패. 규칙 기반 판별로 대체합니다: {exc}", file=sys.stderr)
+            else:
+                raise
+    elif analyzer == "openai":
+        try:
+            analysis_payload = call_openai_json(analysis_prompt)
             print("[정보] OpenAI API 분석 완료")
         except Exception as exc:
-            print(f"[경고] OpenAI API 분석 실패. 규칙 기반 판별로 대체합니다: {exc}", file=sys.stderr)
+            if args.send_mode == "none" or os.environ.get("ALLOW_RULE_BASED_ALERTS", "").lower() in {"1", "true", "yes"}:
+                print(f"[경고] OpenAI API 분석 실패. 규칙 기반 판별로 대체합니다: {exc}", file=sys.stderr)
+            else:
+                raise
+    elif analyzer == "rule":
+        print("[정보] 규칙 기반 분석 모드를 사용합니다.")
+    else:
+        raise ValueError(f"지원하지 않는 분석 모드입니다: {analyzer}")
 
-    analysis_payload = openai_payload or fallback_analysis(candidates, recent_sent)
+    analysis_payload = analysis_payload or fallback_analysis(candidates, recent_sent)
     alerts = select_alerts(candidates, analysis_payload, recent_sent, args.max_alerts)
     print(f"[정보] 전송 대상 부정이슈 {len(alerts)}개")
 
