@@ -56,7 +56,7 @@ class LLMSummarizer:
 - 단톡방에서 아침에 빠르게 읽을 수 있게 핵심 이슈를 가능한 한 10개 항목으로 정리하세요.
 - 수집된 뉴스가 너무 적거나 서로 중복되면 8~10개 항목으로 정리하세요.
 - 각 항목은 제목 한 줄과 설명 한두 문장으로 쓰세요.
-- 각 항목 바로 아래에는 반드시 "기사 링크: URL" 형식으로 해당 내용을 대표하는 기사 링크 1개를 넣으세요.
+- 각 항목 바로 아래에는 해당 내용을 대표하는 기사 URL 1개만 단독 줄로 넣으세요.
 - 여러 기사를 묶은 항목이라도 가장 대표적인 기사 링크 1개만 넣고, URL은 위 뉴스 데이터의 "링크" 값에서 그대로 복사하세요.
 - 친절하지만 과장 없는 한국어 문체를 사용하세요.
 - 첫 줄은 "📢 [오늘의 병무청 브리핑]"로 시작하세요.
@@ -111,7 +111,7 @@ class LLMSummarizer:
             if description:
                 lines.append(self._clip_text(description, 110))
             if link:
-                lines.append(f"기사 링크: {link}")
+                lines.append(link)
             lines.append("")
 
         if not selected:
@@ -271,7 +271,7 @@ class LLMSummarizer:
             block_without_links = self._remove_link_lines(block)
             link = existing_link or self._representative_link(block_without_links, news_items, used_links)
             if link:
-                rebuilt.append(f"{block_without_links.rstrip()}\n기사 링크: {link}".strip())
+                rebuilt.append(f"{block_without_links.rstrip()}\n{link}".strip())
                 used_links.add(link)
             else:
                 rebuilt.append(block_without_links.strip())
