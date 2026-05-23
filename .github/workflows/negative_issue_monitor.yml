@@ -15,6 +15,7 @@ concurrency:
 jobs:
   scan-and-alert:
     runs-on: self-hosted
+    timeout-minutes: 12
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,11 +44,16 @@ jobs:
 
       - name: Commit monitor state
         shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GIT_TERMINAL_PROMPT: "0"
+          GCM_INTERACTIVE: "Never"
         run: |
           $ErrorActionPreference = "Stop"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase --autostash origin main
+          git config --local --replace-all http.https://github.com/.extraheader "AUTHORIZATION: bearer $env:GITHUB_TOKEN"
+          git -c credential.helper= -c core.askPass= pull --rebase --autostash origin main
           git add negative_issue_state.json
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) {
@@ -58,4 +64,4 @@ jobs:
             throw "git diff --cached --quiet failed with exit code $LASTEXITCODE"
           }
           git commit -m "chore: update negative issue monitor state"
-          git push origin HEAD:main
+          git -c credential.helper= -c core.askPass= push origin HEAD:main
