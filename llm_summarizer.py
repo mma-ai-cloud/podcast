@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from difflib import SequenceMatcher
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -55,6 +56,8 @@ class LLMSummarizer:
 - 단톡방에서 아침에 빠르게 읽을 수 있게 핵심 이슈를 가능한 한 10개 항목으로 정리하세요.
 - 수집된 뉴스가 너무 적거나 서로 중복되면 8~10개 항목으로 정리하세요.
 - 각 항목은 제목 한 줄과 설명 한두 문장으로 쓰세요.
+- 각 항목 바로 아래에는 반드시 "기사 링크: URL" 형식으로 해당 내용을 대표하는 기사 링크 1개를 넣으세요.
+- 여러 기사를 묶은 항목이라도 가장 대표적인 기사 링크 1개만 넣고, URL은 위 뉴스 데이터의 "링크" 값에서 그대로 복사하세요.
 - 친절하지만 과장 없는 한국어 문체를 사용하세요.
 - 첫 줄은 "📢 [오늘의 병무청 브리핑]"로 시작하세요.
 - 항목 번호는 반드시 "1️⃣", "2️⃣", "3️⃣" 같은 숫자 이모티콘을 사용하세요. "1.", "2.", "1)" 형식은 쓰지 마세요.
@@ -82,6 +85,7 @@ class LLMSummarizer:
                 result = self._run_codex_json(prompt)
                 self._validate_result(result)
                 result["kakao_message"] = self._normalize_kakao_message(result["kakao_message"])
+                result["kakao_message"] = self._ensure_article_links(result["kakao_message"], news_items)
                 print(f"[정보] Codex CLI 요약 성공! (시도 {attempt}회)")
                 return result
             except Exception as e:
@@ -92,12 +96,41 @@ class LLMSummarizer:
                     time.sleep(wait_sec)
 
         print("[오류] Codex CLI 최대 재시도 횟수 초과. 폴백 메시지를 사용합니다.", file=sys.stderr)
+        return self._fallback_result(news_items)
+
+    def _fallback_result(self, news_items):
+        selected = news_items[:10]
+        lines = ["📢 [오늘의 병무청 브리핑]", ""]
+        number_emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+        for index, item in enumerate(selected):
+            title = item.get("title", "").strip() or "병무청 관련 소식"
+            description = item.get("description", "").strip()
+            link = self._item_link(item)
+            lines.append(f"{number_emoji[index]} {title}")
+            if description:
+                lines.append(self._clip_text(description, 110))
+            if link:
+                lines.append(f"기사 링크: {link}")
+            lines.append("")
+
+        if not selected:
+            lines.append("뉴스 요약 중 오류가 발생했습니다. 플레이어 링크를 참고해 주세요.")
+
+        title_summary = " ".join(
+            item.get("title", "").strip()
+            for item in selected[:5]
+            if item.get("title", "").strip()
+        )
+        tts_script = (
+            "안녕하세요. 오늘 아침 병무청 뉴스 브리핑입니다. "
+            "요약 시스템에 일시적인 지연이 있어 주요 기사 제목 중심으로 안내드립니다. "
+            f"{title_summary}"
+        ).strip()
+
         return {
-            "kakao_message": (
-                "📢 [오늘의 병무청 브리핑]\n\n"
-                "뉴스 요약 중 오류가 발생했습니다. 플레이어 링크를 참고해 주세요."
-            ),
-            "tts_script": (
+            "kakao_message": "\n".join(lines).strip(),
+            "tts_script": tts_script or (
                 "안녕하세요. 오늘 아침 병무청 뉴스 브리핑 시스템에 일시적인 지연이 발생했습니다. "
                 "대단히 죄송합니다. 잠시 후 다시 실행해 주시기 바랍니다. 감사합니다."
             ),
@@ -216,6 +249,119 @@ class LLMSummarizer:
         normalized = re.sub(r"(?m)^(\s*)(10|[1-9])[\.\)]\s+", replace_number, normalized)
         normalized = re.sub(r"(?m)^(\s*)[-*]\s+", r"\1", normalized)
         return normalized.strip()
+
+    def _ensure_article_links(self, message, news_items):
+        """각 번호 항목 아래에 대표 기사 링크 한 개를 붙입니다."""
+        if not news_items:
+            return message.strip()
+
+        item_blocks = self._split_numbered_blocks(message)
+        if not item_blocks:
+            return message.strip()
+
+        rebuilt = []
+        used_links = set()
+        for kind, block in item_blocks:
+            if kind == "preamble":
+                if block.strip():
+                    rebuilt.append(block.strip())
+                continue
+
+            existing_link = self._first_link(block)
+            block_without_links = self._remove_link_lines(block)
+            link = existing_link or self._representative_link(block_without_links, news_items, used_links)
+            if link:
+                rebuilt.append(f"{block_without_links.rstrip()}\n기사 링크: {link}".strip())
+                used_links.add(link)
+            else:
+                rebuilt.append(block_without_links.strip())
+
+        return "\n\n".join(part for part in rebuilt if part).strip()
+
+    def _split_numbered_blocks(self, message):
+        markers = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟")
+        blocks = []
+        current = []
+        current_kind = "preamble"
+
+        for line in message.splitlines():
+            stripped = line.lstrip()
+            if any(stripped.startswith(marker) for marker in markers):
+                if current:
+                    blocks.append((current_kind, "\n".join(current).strip()))
+                current = [line]
+                current_kind = "item"
+            else:
+                current.append(line)
+
+        if current:
+            blocks.append((current_kind, "\n".join(current).strip()))
+        return blocks
+
+    def _remove_link_lines(self, block):
+        lines = []
+        for line in block.splitlines():
+            stripped = line.strip()
+            if re.match(r"^(?:기사\s*)?링크\s*:", stripped):
+                continue
+            if re.fullmatch(r"https?://\S+", stripped):
+                continue
+            lines.append(line)
+        return "\n".join(lines).strip()
+
+    def _first_link(self, block):
+        match = re.search(r"https?://\S+", block or "")
+        if not match:
+            return ""
+        return match.group(0).rstrip(".,;)")
+
+    def _representative_link(self, block, news_items, used_links=None):
+        used_links = used_links or set()
+        best_item = None
+        best_score = -1
+        best_unused_item = None
+        best_unused_score = -1
+        block_key = self._normalize_for_match(block)
+        block_tokens = set(self._tokenize(block))
+
+        for item in news_items:
+            title = item.get("title", "")
+            description = item.get("description", "")
+            item_text = f"{title} {description}"
+            item_key = self._normalize_for_match(item_text)
+            item_tokens = set(self._tokenize(item_text))
+            token_score = len(block_tokens & item_tokens) / max(len(block_tokens | item_tokens), 1)
+            char_score = SequenceMatcher(None, block_key, item_key).ratio()
+            title_key = self._normalize_for_match(title)
+            title_bonus = 0.15 if title_key and title_key in block_key else 0
+            score = (token_score * 0.65) + (char_score * 0.35) + title_bonus
+            if score > best_score:
+                best_score = score
+                best_item = item
+            if self._item_link(item) not in used_links and score > best_unused_score:
+                best_unused_score = score
+                best_unused_item = item
+
+        if best_unused_item:
+            return self._item_link(best_unused_item)
+        return self._item_link(best_item) if best_item else ""
+
+    def _item_link(self, item):
+        if not item:
+            return ""
+        return (item.get("link") or item.get("originallink") or "").strip()
+
+    def _normalize_for_match(self, value):
+        return re.sub(r"[\W_]+", "", value or "", flags=re.UNICODE).lower()
+
+    def _tokenize(self, value):
+        return re.findall(r"[가-힣A-Za-z0-9]{2,}", value or "")
+
+    def _clip_text(self, value, limit):
+        text = re.sub(r"\s+", " ", value or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
 
     def _output_schema(self):
         return {
