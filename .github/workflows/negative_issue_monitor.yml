@@ -52,16 +52,21 @@ jobs:
           $ErrorActionPreference = "Stop"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --local --replace-all http.https://github.com/.extraheader "AUTHORIZATION: bearer $env:GITHUB_TOKEN"
-          git -c credential.helper= -c core.askPass= pull --rebase --autostash origin main
-          git add negative_issue_state.json
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "No negative issue state changes."
-            exit 0
+          $basicAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GITHUB_TOKEN"))
+          try {
+            git config --local --replace-all http.extraheader "AUTHORIZATION: basic $basicAuth"
+            git -c credential.helper= -c core.askPass= pull --rebase --autostash origin main
+            git add negative_issue_state.json
+            git diff --cached --quiet
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "No negative issue state changes."
+              exit 0
+            }
+            if ($LASTEXITCODE -ne 1) {
+              throw "git diff --cached --quiet failed with exit code $LASTEXITCODE"
+            }
+            git commit -m "chore: update negative issue monitor state"
+            git -c credential.helper= -c core.askPass= push origin HEAD:main
+          } finally {
+            git config --local --unset-all http.extraheader 2>$null
           }
-          if ($LASTEXITCODE -ne 1) {
-            throw "git diff --cached --quiet failed with exit code $LASTEXITCODE"
-          }
-          git commit -m "chore: update negative issue monitor state"
-          git -c credential.helper= -c core.askPass= push origin HEAD:main
