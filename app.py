@@ -66,6 +66,12 @@ def get_audio_duration_seconds(audio_path):
 def ensure_trailing_slash(url):
     return url if url.endswith("/") else f"{url}/"
 
+def format_korean_date(dt):
+    return f"{dt.year}년 {dt.month}월 {dt.day}일"
+
+def build_kakao_link_message(pages_url, date_text):
+    return f"🎧{date_text} 병무청 뉴스 AI 음성요약 듣기\n{pages_url}"
+
 def safe_archive_id(value):
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
     return cleaned or "briefing"
@@ -275,7 +281,7 @@ def main():
     print("\n[Step 4] Creating data.json for web player...")
     timezone_kst = timezone(timedelta(hours=9))
     now_kst = datetime.now(timezone_kst)
-    today_str = now_kst.strftime("%Y년 %m월 %d일")
+    today_str = format_korean_date(now_kst)
     archive_id = now_kst.strftime("%Y%m%d-%H%M%S")
     
     # 카카오톡 메시지에 실제 배포될 웹 플레이어 링크 결합
@@ -287,7 +293,7 @@ def main():
         "date": today_str,
         "kakao_message": final_kakao_message,  # 카카오톡 전송 시 바로 활용할 수 있도록 최종 메시지 저장
         "player_url": pages_url,
-        "kakao_link_message": pages_url,
+        "kakao_link_message": build_kakao_link_message(pages_url, today_str),
         "audio_src": output_mp3 if tts_success else None,
         "audio_duration_seconds": audio_duration_seconds,
         "tts_script": tts_script,

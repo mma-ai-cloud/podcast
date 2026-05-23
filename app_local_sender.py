@@ -22,6 +22,23 @@ def load_dotenv():
 # 로컬 설정 로드
 load_dotenv()
 
+def build_audio_link_message(data):
+    link_message = (data.get("kakao_link_message") or "").strip()
+    player_url = (data.get("player_url") or "").strip()
+
+    if not link_message:
+        link_message = player_url
+    if not link_message:
+        return ""
+
+    has_title = "음성요약" in link_message or "음성 요약" in link_message
+    is_bare_url = link_message.startswith(("http://", "https://"))
+    if has_title or not is_bare_url:
+        return link_message
+
+    date_text = (data.get("date") or "오늘").strip()
+    return f"🎧{date_text} 병무청 뉴스 AI 음성요약 듣기\n{link_message}"
+
 def main():
     # 윈도우 환경에서 이모지 출력 시 cp949 인코딩 에러 방지
     if sys.stdout.encoding != 'utf-8':
@@ -53,8 +70,9 @@ def main():
     if not message:
         print("[오류] 요약된 카카오톡 메시지 내용이 data.json에 존재하지 않습니다.", file=sys.stderr)
         sys.exit(1)
-    link_message = (data.get("kakao_link_message") or data.get("player_url") or "").strip()
-    if link_message and link_message in message:
+    link_message = build_audio_link_message(data)
+    player_url = (data.get("player_url") or "").strip()
+    if link_message and (link_message in message or (player_url and player_url in message)):
         link_message = ""
 
     # 전송할 대화방 이름 로드
@@ -63,7 +81,7 @@ def main():
     print("====== 전송할 메시지 내용 ======")
     print(message)
     if link_message:
-        print("\n====== 별도 전송할 음성요약페이지 주소 ======")
+        print("\n====== 별도 전송할 음성요약페이지 메시지 ======")
         print(link_message)
     print("================================\n")
 
