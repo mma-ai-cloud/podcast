@@ -4,7 +4,7 @@
   "kakao_message": "📢 [오늘의 병무청 브리핑]\n\n1️⃣ 법무부, 유승준 입국 제한 관련 대응\n정성호 장관의 병역면탈 관련 발언과 함께, 법무부가 유승준 입국 문제에 대응한다는 내용이 보도됐습니다.\nhttps://n.news.naver.com/mnews/article/088/0001011297?sid=102\n\n2️⃣ 병무청과 법무부의 입국 금지 조치 언급\n기사 설명에 따르면 병무청과 법무부는 출입국관리법 제11조에 근거해 유승준에 대한 입국 금지 조치를 내린 바 있습니다.\nhttps://n.news.naver.com/mnews/article/088/0001011297?sid=102\n\n3️⃣ 유승준의 재외동포비자 신청 이력\n유승준은 만 38세를 넘긴 2015년 9월 재외동포비자인 F-4 비자를 신청한 것으로 설명됐습니다.\nhttps://n.news.naver.com/mnews/article/088/0001011297?sid=102\n\n4️⃣ LA총영사관의 비자 관련 판단 언급\n해당 보도는 유승준의 재외동포비자 신청 이후 LA총영사관의 판단이 이어졌다고 설명했습니다.\nhttps://n.news.naver.com/mnews/article/088/0001011297?sid=102\n\n5️⃣ 육·해·공 과학기술병 모집 본격화\n육군, 해군, 공군의 과학기술병 모집이 본격화됐다는 보도가 나왔습니다.\nhttps://www.goodmorningcc.com/news/articleView.html?idxno=446521\n\n6️⃣ 지원 자격과 일정은 병무청 누리집에서 확인\n과학기술병 지원 자격과 세부 일정은 병무청 누리집에서 확인할 수 있다고 안내됐습니다.\nhttps://www.goodmorningcc.com/news/articleView.html?idxno=446521\n\n7️⃣ 군 복무 인식 변화 언급\n기사 설명은 과거 군 복무가 경력 단절의 시간으로 인식됐지만, 이제는 첨단기술 실무경험을 축적하는 경력의 연장선으로 변화하고 있다고 전했습니다.\nhttps://www.goodmorningcc.com/news/articleView.html?idxno=446521\n\n8️⃣ AI 등 첨단기술 분야와 군 복무 연결\n과학기술병 보도에서는 AI 등 첨단기술 분야와 군 복무 경험의 연결성이 강조됐습니다.\nhttps://www.goodmorningcc.com/news/articleView.html?idxno=446521",
   "player_url": "https://mma-ai-cloud.github.io/podcast/",
   "kakao_link_message": "🎧2026년 5월 24일 병무청 뉴스 AI 음성요약 듣기\nhttps://mma-ai-cloud.github.io/podcast/",
-  "audio_src": "briefing.mp3",
+  "audio_src": "archive/20260524-170357/briefing.mp3",
   "audio_duration_seconds": 47.208,
   "tts_script": "오늘의 병무청 관련 뉴스 브리핑입니다. 먼저 법무부가 유승준 입국 문제와 관련해 대응에 나선다는 보도가 있었습니다. 기사에는 병무청과 법무부가 출입국관리법 제십일조에 근거해 유승준에 대한 입국 금지 조치를 내렸다는 내용이 담겼습니다. 또 유승준이 만 서른여덟 살을 넘긴 이천십오년 구월 재외동포비자를 신청했다는 설명도 포함됐습니다. 병무청 관련 소식으로는 육군, 해군, 공군의 과학기술병 모집이 본격화됐다는 보도가 나왔습니다. 지원 자격과 세부 일정은 병무청 누리집에서 확인할 수 있으며, 군 복무가 첨단기술 실무경험을 쌓는 경력의 연장선으로 변화하고 있다는 설명이 전해졌습니다.",
   "news_list": [
@@ -23,5 +23,7 @@
       "pubDate": "2026-05-23 07:34:00"
     }
   ],
-  "updated_at": "2026-05-24 17:03:57 KST"
+  "updated_at": "2026-05-24 17:03:57 KST",
+  "canonical_data_path": "archive/20260524-170357/data.json",
+  "is_archive": true
 }
